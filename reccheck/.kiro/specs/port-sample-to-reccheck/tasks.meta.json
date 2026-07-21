@@ -1,0 +1,29 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1. Create tenant database migrations": [
+      {
+        "executionId": "be6fbf42-dfd7-4a7a-bf74-5a999fec0784",
+        "chatSessionId": "sess_2f646c19-55d5-4e05-97e9-434050415c76",
+        "timestamp": 1784641097780
+      },
+      {
+        "executionId": "be6fbf42-dfd7-4a7a-bf74-5a999fec0784",
+        "chatSessionId": "sess_2f646c19-55d5-4e05-97e9-434050415c76",
+        "timestamp": 1784642418158
+      }
+    ],
+    "2. Create Eloquent models for tenant entities": [
+      {
+        "executionId": "322ddfc8-a059-4706-9346-83c0a2cc984c",
+        "chatSessionId": "sess_dec21c64-1b1c-470a-b436-3f04c4b9b04e",
+        "timestamp": 1784642534653
+      },
+      {
+        "executionId": "322ddfc8-a059-4706-9346-83c0a2cc984c",
+        "chatSessionId": "sess_dec21c64-1b1c-470a-b436-3f04c4b9b04e",
+        "timestamp": 1784642813987
+      }
+    ]
+  }
+}
