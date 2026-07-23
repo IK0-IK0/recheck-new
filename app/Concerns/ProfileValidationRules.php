@@ -2,7 +2,6 @@
 
 namespace App\Concerns;
 
-use App\Models\User;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Validation\Rule;
 
@@ -18,6 +17,7 @@ trait ProfileValidationRules
         return [
             'name' => $this->nameRules(),
             'email' => $this->emailRules($userId),
+            'theme_color' => $this->themeColorRules(),
         ];
     }
 
@@ -44,8 +44,20 @@ trait ProfileValidationRules
             'email',
             'max:255',
             $userId === null
-                ? Rule::unique(User::class)
-                : Rule::unique(User::class)->ignore($userId),
+                ? Rule::unique('tenant.users', 'email')
+                : Rule::unique('tenant.users', 'email')->ignore($userId),
         ];
+    }
+
+    /**
+     * Get the validation rules for theme_color.
+     *
+     * Resolves THEME_COLORS from the using class (e.g. ProfileUpdateRequest).
+     *
+     * @return array<int, ValidationRule|array<mixed>|string>
+     */
+    protected function themeColorRules(): array
+    {
+        return ['sometimes', 'nullable', 'string', Rule::in(static::THEME_COLORS)];
     }
 }

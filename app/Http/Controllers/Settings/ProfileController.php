@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Settings;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Settings\PasswordUpdateRequest;
 use App\Http\Requests\Settings\ProfileDeleteRequest;
 use App\Http\Requests\Settings\ProfileUpdateRequest;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
@@ -26,17 +27,21 @@ class ProfileController extends Controller
     }
 
     /**
-     * Update the user's profile information.
+     * Update the authenticated TenantUser's profile information.
+     *
+     * Updates name, email, and theme_color in the tenant DB.
+     * Requirements: 8.1, 8.5, 8.6
      */
     public function update(ProfileUpdateRequest $request): RedirectResponse
     {
-        $request->user()->fill($request->validated());
+        $user = $request->user();
+        $user->fill($request->validated());
 
-        if ($request->user()->isDirty('email')) {
-            $request->user()->email_verified_at = null;
+        if ($user->isDirty('email')) {
+            $user->email_verified_at = null;
         }
 
-        $request->user()->save();
+        $user->save();
 
         Inertia::flash('toast', ['type' => 'success', 'message' => __('Profile updated.')]);
 
@@ -44,7 +49,27 @@ class ProfileController extends Controller
     }
 
     /**
-     * Delete the user's profile.
+     * Update the authenticated TenantUser's password.
+     *
+     * Verifies current password and stores a new hashed password in the tenant DB.
+     * Requirements: 8.2, 8.3
+     */
+    public function updatePassword(PasswordUpdateRequest $request): RedirectResponse
+    {
+        $request->user()->update([
+            'password' => $request->validated('password'),
+        ]);
+
+        Inertia::flash('toast', ['type' => 'success', 'message' => __('Password updated.')]);
+
+        return redirect()->back();
+    }
+
+    /**
+     * Delete the authenticated TenantUser's account.
+     *
+     * Verifies password, deletes TenantUser record from tenant DB, logs out.
+     * Requirement: 8.4
      */
     public function destroy(ProfileDeleteRequest $request): RedirectResponse
     {
