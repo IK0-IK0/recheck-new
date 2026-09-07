@@ -17,8 +17,8 @@ class RoleManagementController extends Controller
      */
     public function index(): Response
     {
-        return Inertia::render('Admin/Roles', [
-            'roles' => Role::with('permissions')->get(),
+        return Inertia::render('Tenant/Roles', [
+            'roles' => Role::with('permissions')->orderByDesc('id')->get(),
             'permissions' => Permission::all(),
         ]);
     }

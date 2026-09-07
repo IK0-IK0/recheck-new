@@ -8,6 +8,7 @@ use App\Models\TenantUser;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -19,9 +20,12 @@ class UserManagementController extends Controller
      */
     public function index(): Response
     {
-        return Inertia::render('Admin/Users', [
+        // Add caching for roles since they don't change often
+        $roles = Cache::remember('roles', 3600, fn () => Role::all());
+
+        return Inertia::render('Tenant/Users', [
             'users' => TenantUser::with('roles')->get(),
-            'roles' => Role::all(),
+            'roles' => $roles,
         ]);
     }
 
@@ -55,13 +59,11 @@ class UserManagementController extends Controller
     {
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'email', 'max:255', Rule::unique('tenant.users', 'email')->ignore($user->id)],
             'roles' => ['array'],
         ]);
 
         $user->update([
             'name' => $validated['name'],
-            'email' => $validated['email'],
         ]);
 
         $user->roles()->sync($request->input('roles', []));

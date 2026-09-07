@@ -29,6 +29,8 @@ class ActionFactory extends Factory
             'phase_id' => Phase::factory(),
             'name' => fake()->sentence(2),
             'description' => fake()->optional()->paragraph(),
+            'action_type' => fake()->randomElement(['check', 'submission', 'review']),
+            'requires_file' => false,
             'order' => fake()->numberBetween(0, 100),
         ];
     }

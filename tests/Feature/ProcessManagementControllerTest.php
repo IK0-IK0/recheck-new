@@ -11,8 +11,10 @@
 
 use App\Http\Controllers\ProcessManagementController;
 use App\Models\Action;
+use App\Models\Document;
 use App\Models\Phase;
 use App\Models\Process;
+use App\Models\Role;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -108,18 +110,63 @@ test('storeAction assigns order = max(existing order) + 1', function (): void {
     $phase = Phase::factory()->create();
 
     // No actions yet — first should get order = 1
-    $request = Request::create('/actions', 'POST', ['name' => 'Action A']);
+    $request = Request::create('/actions', 'POST', [
+        'name' => 'Action A',
+        'action_type' => 'check',
+    ]);
     $controller->storeAction($request, $phase);
 
     $firstAction = $phase->actions()->orderBy('id')->first();
     expect($firstAction->order)->toBe(1);
 
     // Second action should get order = 2
-    $request2 = Request::create('/actions', 'POST', ['name' => 'Action B']);
+    $request2 = Request::create('/actions', 'POST', [
+        'name' => 'Action B',
+        'action_type' => 'check',
+    ]);
     $controller->storeAction($request2, $phase);
 
     $secondAction = $phase->actions()->orderByDesc('order')->first();
     expect($secondAction->order)->toBe(2);
+});
+
+test('storeAction and updateAction persist selected role access assignments, document requirements, and action type', function (): void {
+    $controller = new ProcessManagementController;
+    $phase = Phase::factory()->create();
+    $roleA = Role::factory()->create();
+    $roleB = Role::factory()->create();
+    $documentA = Document::factory()->create();
+    $documentB = Document::factory()->create();
+
+    $storeRequest = Request::create('/actions', 'POST', [
+        'name' => 'Action A',
+        'action_type' => 'submission',
+        'role_ids' => [$roleA->id, $roleB->id],
+        'document_ids' => [$documentA->id, $documentB->id],
+    ]);
+
+    $controller->storeAction($storeRequest, $phase);
+
+    $action = $phase->actions()->first();
+    expect($action->action_type)->toBe('submission');
+    expect($action->roles()->pluck('roles.id')->all())->toBe([$roleA->id, $roleB->id]);
+    expect($action->documents()->pluck('documents.id')->all())->toBe([$documentA->id, $documentB->id]);
+
+    $newRole = Role::factory()->create();
+    $newDocument = Document::factory()->create();
+
+    $updateRequest = Request::create('/actions', 'PUT', [
+        'name' => 'Action A Updated',
+        'action_type' => 'check',
+        'role_ids' => [$newRole->id],
+        'document_ids' => [$newDocument->id],
+    ]);
+
+    $controller->updateAction($updateRequest, $action);
+
+    expect($action->fresh()->action_type)->toBe('check');
+    expect($action->fresh()->roles()->pluck('roles.id')->all())->toBe([$newRole->id]);
+    expect($action->fresh()->documents()->pluck('documents.id')->all())->toBe([$newDocument->id]);
 });
 
 // ---------------------------------------------------------------------------

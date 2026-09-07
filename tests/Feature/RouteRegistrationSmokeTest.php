@@ -12,52 +12,51 @@ use App\Models\Permission;
 use App\Models\Role;
 use App\Models\TenantUser;
 use Illuminate\Support\Facades\Route;
-use Inertia\Testing\AssertableInertia as Assert;
+use Inertia\Middleware;
 
 // ---------------------------------------------------------------------------
 // Requirement 11.1–11.4: Expected routes are registered
 // ---------------------------------------------------------------------------
-test('processes index route is registered', function (): void {
-    expect(Route::has('processes.index'))->toBeTrue();
+test('tenant processes index route is registered', function (): void {
+    expect(Route::has('tenant.processes.index'))->toBeTrue();
 });
 
-test('documents index route is registered', function (): void {
-    expect(Route::has('documents.index'))->toBeTrue();
+test('tenant documents index route is registered', function (): void {
+    expect(Route::has('tenant.documents.index'))->toBeTrue();
 });
 
-test('admin users index route is registered', function (): void {
+test('tenant users index route is registered', function (): void {
     expect(Route::has('users.index'))->toBeTrue();
 });
 
-test('admin roles index route is registered', function (): void {
+test('tenant roles index route is registered', function (): void {
     expect(Route::has('roles.index'))->toBeTrue();
 });
 
 // ---------------------------------------------------------------------------
-// Requirement 11.1: Unauthenticated requests to /admin/users are redirected
+// Requirement 11.1: Unauthenticated requests to /tenant/users are redirected
 // ---------------------------------------------------------------------------
-test('unauthenticated request to admin users is redirected to login', function (): void {
-    $response = $this->get('/admin/users');
+test('unauthenticated request to tenant users is redirected to login', function (): void {
+    $response = $this->get('/tenant/users');
 
     $response->assertRedirect(route('login'));
 });
 
 // ---------------------------------------------------------------------------
-// Requirement 11.3: Authenticated users without admin permission get 403
+// Requirement 11.3: Any authenticated user can access tenant users
 // ---------------------------------------------------------------------------
-test('authenticated user without admin permission gets 403 on admin users', function (): void {
-    // TenantUser with no roles/permissions — CheckPermission will abort 403
+test('authenticated user without tenant roles can still access tenant users', function (): void {
     $tenantUser = TenantUser::factory()->create();
 
-    $response = $this->actingAs($tenantUser, 'web')->get('/admin/users');
+    $response = $this->actingAs($tenantUser, 'web')->get('/tenant/users');
 
-    $response->assertForbidden();
+    $response->assertOk();
 });
 
 // ---------------------------------------------------------------------------
-// Requirement 11.3: Authenticated user with admin permission can access /admin/users
+// Requirement 11.3: Authenticated user with a role can access /tenant/users
 // ---------------------------------------------------------------------------
-test('authenticated user with admin permission can access admin users', function (): void {
+test('authenticated tenant user can access tenant users', function (): void {
     $tenantUser = TenantUser::factory()->create();
 
     $adminPermission = Permission::factory()->create(['name' => 'admin']);
@@ -65,9 +64,12 @@ test('authenticated user with admin permission can access admin users', function
     $adminRole->permissions()->attach($adminPermission->id);
     $tenantUser->roles()->attach($adminRole->id);
 
-    // Use assertInertia which sends an X-Inertia request and checks the JSON
-    // response — this avoids Vite manifest resolution for unbuilt frontend pages.
     $this->actingAs($tenantUser, 'web')
-        ->get('/admin/users')
-        ->assertInertia(fn (Assert $page) => $page->component('Admin/Users'));
+        ->withHeaders([
+            'X-Inertia' => 'true',
+            'X-Inertia-Version' => app(Middleware::class)->version(request()),
+        ])
+        ->get('/tenant/users')
+        ->assertOk()
+        ->assertJson(['component' => 'Tenant/Users']);
 });

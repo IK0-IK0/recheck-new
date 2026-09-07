@@ -24,11 +24,11 @@ class DocumentFactory extends Factory
      */
     public function definition(): array
     {
-        $filename = fake()->slug(3) . '.' . fake()->randomElement(['pdf', 'docx', 'xlsx', 'txt']);
+        $filename = fake()->slug(3).'.'.fake()->randomElement(['pdf', 'docx', 'xlsx', 'txt']);
 
         return [
             'name' => $filename,
-            'file_path' => 'documents/' . $filename,
+            'file_path' => 'documents/'.$filename,
             'file_type' => fake()->mimeType(),
             'label' => fake()->randomElement(['form', 'doc']),
         ];

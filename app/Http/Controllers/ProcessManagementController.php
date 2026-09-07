@@ -3,8 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\Action;
+use App\Models\Document;
 use App\Models\Phase;
 use App\Models\Process;
+use App\Models\Role;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -17,10 +19,19 @@ class ProcessManagementController extends Controller
      */
     public function index(): Response
     {
-        $processes = Process::with(['phases.actions'])->orderBy('id')->get();
+        $processes = Process::with([
+            'phases' => fn ($query) => $query->orderBy('order')->orderBy('id'),
+            'phases.actions' => fn ($query) => $query->orderBy('order')->orderBy('id'),
+            'phases.actions.roles' => fn ($query) => $query->orderBy('name'),
+            'phases.actions.documents' => fn ($query) => $query->orderBy('name'),
+        ])->orderBy('id')->get();
+        $roles = Role::orderBy('name')->get();
+        $documents = Document::orderBy('name')->get();
 
-        return Inertia::render('ProcessManagement', [
+        return Inertia::render('Tenant/ProcessManagement', [
             'processes' => $processes,
+            'roles' => $roles,
+            'documents' => $documents,
         ]);
     }
 
@@ -140,14 +151,36 @@ class ProcessManagementController extends Controller
     {
         $request->validate([
             'name' => ['required', 'string', 'max:255'],
+            'action_type' => ['required', 'in:review,submit'],
+            'requires_file' => ['sometimes', 'boolean'],
+            'document_ids' => ['sometimes', 'array'],
+            'document_ids.*' => ['integer', function (string $attribute, mixed $value, \Closure $fail): void {
+                if (! Document::on('tenant')->whereKey($value)->exists()) {
+                    $fail('The selected document is invalid.');
+                }
+            }],
+            'role_ids' => ['sometimes', 'array'],
+            'role_ids.*' => ['integer', function (string $attribute, mixed $value, \Closure $fail): void {
+                if (! Role::on('tenant')->whereKey($value)->exists()) {
+                    $fail('The selected role is invalid.');
+                }
+            }],
         ]);
 
         $nextOrder = ($phase->actions()->max('order') ?? 0) + 1;
+        $actionType = $request->input('action_type', 'review');
+        $requiresFile = $actionType === 'submit' || (bool) $request->input('requires_file', false);
 
-        $phase->actions()->create([
+        $action = $phase->actions()->create([
             'name' => $request->input('name'),
+            'description' => $request->input('description'),
+            'action_type' => $actionType,
+            'requires_file' => $requiresFile,
             'order' => $nextOrder,
         ]);
+
+        $action->roles()->sync($request->input('role_ids', []));
+        $action->documents()->sync($request->input('document_ids', []));
 
         return redirect()->back();
     }
@@ -159,9 +192,33 @@ class ProcessManagementController extends Controller
     {
         $request->validate([
             'name' => ['required', 'string', 'max:255'],
+            'action_type' => ['required', 'in:review,submit'],
+            'requires_file' => ['sometimes', 'boolean'],
+            'document_ids' => ['sometimes', 'array'],
+            'document_ids.*' => ['integer', function (string $attribute, mixed $value, \Closure $fail): void {
+                if (! Document::on('tenant')->whereKey($value)->exists()) {
+                    $fail('The selected document is invalid.');
+                }
+            }],
+            'role_ids' => ['sometimes', 'array'],
+            'role_ids.*' => ['integer', function (string $attribute, mixed $value, \Closure $fail): void {
+                if (! Role::on('tenant')->whereKey($value)->exists()) {
+                    $fail('The selected role is invalid.');
+                }
+            }],
         ]);
 
-        $action->update($request->only('name', 'description'));
+        $actionType = $request->input('action_type', 'review');
+        $requiresFile = $actionType === 'submit' || (bool) $request->input('requires_file', false);
+
+        $action->update([
+            'name' => $request->input('name'),
+            'description' => $request->input('description'),
+            'action_type' => $actionType,
+            'requires_file' => $requiresFile,
+        ]);
+        $action->roles()->sync($request->input('role_ids', []));
+        $action->documents()->sync($request->input('document_ids', []));
 
         return redirect()->back();
     }
@@ -171,6 +228,10 @@ class ProcessManagementController extends Controller
      */
     public function destroyAction(Action $action): RedirectResponse
     {
+        // Detach relationships before deleting
+        $action->roles()->detach();
+        $action->documents()->detach();
+
         $action->delete();
 
         return redirect()->back();

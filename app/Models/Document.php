@@ -5,6 +5,7 @@ namespace App\Models;
 use Database\Factories\DocumentFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Support\Carbon;
 
 /**
@@ -38,5 +39,16 @@ class Document extends Model
         'file_path',
         'file_type',
         'label',
+        'storage_driver',
     ];
+
+    /**
+     * The actions that require this document.
+     *
+     * @return BelongsToMany<Action, $this>
+     */
+    public function actions(): BelongsToMany
+    {
+        return $this->belongsToMany(Action::class, 'action_document', 'document_id', 'action_id');
+    }
 }
