@@ -59,11 +59,19 @@ class UserManagementController extends Controller
     {
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
+            'email' => [
+                'required',
+                'string',
+                'email',
+                'max:255',
+                Rule::unique('tenant.users', 'email')->ignore($user->id),
+            ],
             'roles' => ['array'],
         ]);
 
         $user->update([
             'name' => $validated['name'],
+            'email' => $validated['email'],
         ]);
 
         $user->roles()->sync($request->input('roles', []));

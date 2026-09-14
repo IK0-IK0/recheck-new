@@ -14,11 +14,13 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog';
 
+const defaultRoleFormData = { name: '', permissions: [] };
+
 export default function Roles({ roles = [], permissions = [] }) {
     const [editingRole, setEditingRole] = useState(null);
     const [roleToDelete, setRoleToDelete] = useState(null);
     const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
-    const form = useForm({ name: '', permissions: [] });
+    const form = useForm(defaultRoleFormData);
 
     const handleSubmit = async (values) => {
         form.clearErrors();

@@ -10,6 +10,7 @@ import {
     DialogContent,
     DialogDescription,
     DialogFooter,
+    DialogHeader,
     DialogTitle,
     DialogTrigger,
 } from '@/components/ui/dialog';
@@ -31,9 +32,14 @@ export default function DeleteUser() {
                     </Button>
                 </DialogTrigger>
             </div>
-            <DialogContent>
-                <DialogTitle>Delete account</DialogTitle>
-                <DialogDescription>Confirm your password to permanently delete your account.</DialogDescription>
+            <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-md">
+                <DialogHeader>
+                    <DialogTitle>Delete account</DialogTitle>
+                    <DialogDescription>
+                        Confirm your password to permanently delete your account.
+                    </DialogDescription>
+                </DialogHeader>
+
                 <div className="space-y-4 rounded-lg border border-red-100 bg-red-50 p-4 dark:border-red-200/10 dark:bg-red-700/10">
                     <div className="relative space-y-0.5 text-red-600 dark:text-red-100">
                         <p className="font-medium">Warning</p>
@@ -42,64 +48,59 @@ export default function DeleteUser() {
                         </p>
                     </div>
 
-                            <Form
-                                {...ProfileController.destroy.form()}
-                                options={{
-                                    preserveScroll: true,
-                                }}
-                                onError={() => passwordInput.current?.focus()}
-                                resetOnSuccess
-                                className="space-y-6"
-                            >
-                                {({ resetAndClearErrors, processing, errors }) => (
-                                    <>
-                                        <div className="grid gap-2">
-                                            <Label
-                                                htmlFor="password"
-                                                className="sr-only"
-                                            >
-                                                Password
-                                            </Label>
+                    <Form
+                        {...ProfileController.destroy.form()}
+                        options={{
+                            preserveScroll: true,
+                        }}
+                        onError={() => passwordInput.current?.focus()}
+                        resetOnSuccess
+                        className="space-y-6"
+                    >
+                        {({ resetAndClearErrors, processing, errors }) => (
+                            <>
+                                <div className="grid gap-2">
+                                    <Label htmlFor="password" className="sr-only">
+                                        Password
+                                    </Label>
 
-                                            <PasswordInput
-                                                id="password"
-                                                name="password"
-                                                ref={passwordInput}
-                                                placeholder="Password"
-                                                autoComplete="current-password"
-                                            />
+                                    <PasswordInput
+                                        id="password"
+                                        name="password"
+                                        ref={passwordInput}
+                                        placeholder="Password"
+                                        autoComplete="current-password"
+                                    />
 
-                                            <InputError message={errors.password} />
-                                        </div>
+                                    <InputError message={errors.password} />
+                                </div>
 
-                                        <DialogFooter className="gap-2">
-                                            <DialogClose asChild>
-                                                <Button
-                                                    variant="secondary"
-                                                    onClick={() =>
-                                                        resetAndClearErrors()
-                                                    }
-                                                >
-                                                    Cancel
-                                                </Button>
-                                            </DialogClose>
+                                <DialogFooter className="gap-2">
+                                    <DialogClose asChild>
+                                        <Button
+                                            variant="secondary"
+                                            onClick={() => resetAndClearErrors()}
+                                        >
+                                            Cancel
+                                        </Button>
+                                    </DialogClose>
 
-                                            <Button
-                                                variant="destructive"
-                                                disabled={processing}
-                                                asChild
-                                            >
-                                                <button
-                                                    type="submit"
-                                                    data-test="confirm-delete-user-button"
-                                                >
-                                                    Delete account
-                                                </button>
-                                            </Button>
-                                        </DialogFooter>
-                                    </>
-                                )}
-                            </Form>
+                                    <Button
+                                        variant="destructive"
+                                        disabled={processing}
+                                        asChild
+                                    >
+                                        <button
+                                            type="submit"
+                                            data-test="confirm-delete-user-button"
+                                        >
+                                            Delete account
+                                        </button>
+                                    </Button>
+                                </DialogFooter>
+                            </>
+                        )}
+                    </Form>
                 </div>
             </DialogContent>
         </Dialog>

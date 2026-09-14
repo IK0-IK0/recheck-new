@@ -82,6 +82,26 @@ test('download aborts with 404 when the file does not exist on disk', function (
     $controller->download($document);
 })->throws(HttpException::class);
 
+test('viewUrl returns the view route for local documents', function (): void {
+    Storage::fake('local');
+
+    $filePath = 'documents/preview.txt';
+    Storage::disk('local')->put($filePath, 'Preview content');
+
+    $document = Document::factory()->create([
+        'file_path' => $filePath,
+        'name' => 'preview.txt',
+        'file_type' => 'text/plain',
+        'storage_driver' => 'local',
+    ]);
+
+    $controller = new DocumentManagementController;
+    $response = $controller->viewUrl($document);
+
+    expect($response->getStatusCode())->toBe(200);
+    expect($response->getData(true)['url'])->toContain("/tenant/documents/{$document->id}/view");
+});
+
 // ---------------------------------------------------------------------------
 // Integration: destroy removes the file from disk and the record from the DB
 // Validates: Requirement 5.5

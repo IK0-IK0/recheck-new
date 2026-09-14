@@ -36,13 +36,13 @@ class Role extends Model
     ];
 
     /**
-     * The tenant users that belong to the role.
+     * The institution users that belong to the role.
      *
-     * @return BelongsToMany<TenantUser, $this>
+     * @return BelongsToMany<User, $this>
      */
     public function users(): BelongsToMany
     {
-        return $this->belongsToMany(TenantUser::class, 'role_user', 'role_id', 'user_id');
+        return $this->belongsToMany(User::class, 'role_user', 'role_id', 'user_id');
     }
 
     /**

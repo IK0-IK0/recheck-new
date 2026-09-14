@@ -27,9 +27,9 @@ class ProfileController extends Controller
     }
 
     /**
-     * Update the authenticated TenantUser's profile information.
+     * Update the authenticated institution user's profile information.
      *
-     * Updates name, email, and theme_color in the tenant DB.
+     * Updates name, email, and theme_color in the central database.
      * Requirements: 8.1, 8.5, 8.6
      */
     public function update(ProfileUpdateRequest $request): RedirectResponse
@@ -49,9 +49,9 @@ class ProfileController extends Controller
     }
 
     /**
-     * Update the authenticated TenantUser's password.
+     * Update the authenticated institution user's password.
      *
-     * Verifies current password and stores a new hashed password in the tenant DB.
+     * Verifies current password and stores a new hashed password in the central database.
      * Requirements: 8.2, 8.3
      */
     public function updatePassword(PasswordUpdateRequest $request): RedirectResponse
@@ -66,9 +66,9 @@ class ProfileController extends Controller
     }
 
     /**
-     * Delete the authenticated TenantUser's account.
+     * Delete the authenticated institution user's account.
      *
-     * Verifies password, deletes TenantUser record from tenant DB, logs out.
+     * Verifies password, deletes the central account, and logs out.
      * Requirement: 8.4
      */
     public function destroy(ProfileDeleteRequest $request): RedirectResponse

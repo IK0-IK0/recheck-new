@@ -34,6 +34,7 @@ Route::middleware(['auth', 'verified'])->group(function (): void {
             Route::post('/documents/direct-upload-url', 'directUploadUrl')->name('tenant.documents.direct-upload-url');
             Route::post('/documents/complete-direct-upload', 'completeDirectUpload')->name('tenant.documents.complete-direct-upload');
             Route::get('/documents/{document}/download', 'download')->name('tenant.documents.download');
+            Route::get('/documents/{document}/view-url', 'viewUrl')->name('tenant.documents.view-url');
             Route::get('/documents/{document}/view', 'view')->name('tenant.documents.view');
             Route::delete('/documents/{document}', 'destroy')->name('tenant.documents.destroy');
         });

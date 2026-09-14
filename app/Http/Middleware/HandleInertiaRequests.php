@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 use Inertia\Middleware;
 
 class HandleInertiaRequests extends Middleware
@@ -41,16 +42,22 @@ class HandleInertiaRequests extends Middleware
         $permissions = [];
 
         if ($user !== null && method_exists($user, 'roles')) {
-            $roles = $user->roles()->pluck('name')->all();
+            try {
+                if (Schema::connection('tenant')->hasTable('roles')) {
+                    $roles = $user->roles()->pluck('name')->all();
 
-            $permissions = $user->roles()
-                ->with('permissions')
-                ->get()
-                ->pluck('permissions.*.name')
-                ->flatten()
-                ->unique()
-                ->values()
-                ->all();
+                    $permissions = $user->roles()
+                        ->with('permissions')
+                        ->get()
+                        ->pluck('permissions.*.name')
+                        ->flatten()
+                        ->unique()
+                        ->values()
+                        ->all();
+                }
+            } catch (\Throwable) {
+                // Institution roles are unavailable until its database is configured.
+            }
         }
 
         return [

@@ -204,7 +204,7 @@ class DocumentManagementController extends Controller
                 return response()->json(['error' => 'The direct upload was not found in storage.'], 404);
             }
 
-                $document = Document::create([
+            $document = Document::create([
                 'name' => $validated['name'],
                 'file_path' => $validated['path'],
                 'file_type' => $validated['file_type'],
@@ -212,10 +212,10 @@ class DocumentManagementController extends Controller
                 'storage_driver' => $config->driver,
             ]);
 
-                return response()->json([
-                    'message' => 'Document saved.',
-                    'document' => $document,
-                ]);
+            return response()->json([
+                'message' => 'Document saved.',
+                'document' => $document,
+            ]);
         } catch (Throwable $exception) {
             report($exception);
             Log::error('document_direct_upload_completion_failed', [
@@ -305,6 +305,28 @@ class DocumentManagementController extends Controller
         }, 200, [
             'Content-Type' => $document->file_type,
             'Content-Disposition' => 'inline; filename="'.addslashes($viewName).'"',
+        ]);
+    }
+
+    public function viewUrl(Document $document): JsonResponse
+    {
+        $disk = Storage::disk($document->storage_driver ?? 'local');
+
+        if (! $disk->exists($document->file_path)) {
+            abort(404);
+        }
+
+        if (in_array($document->storage_driver, ['s3', 'supabase'], true)) {
+            return response()->json([
+                'url' => $disk->temporaryUrl($document->file_path, now()->addMinutes(5), [
+                    'ResponseContentDisposition' => 'inline',
+                    'ResponseContentType' => $document->file_type,
+                ]),
+            ]);
+        }
+
+        return response()->json([
+            'url' => route('tenant.documents.view', $document),
         ]);
     }
 
