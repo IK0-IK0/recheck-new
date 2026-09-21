@@ -99,7 +99,7 @@ export default function Roles({ roles = [], permissions = [] }) {
                 {/* Main Content */}
                 <div className="flex-1 overflow-y-auto">
                     <div className="mx-auto max-w-6xl p-4">
-                        <div className="rounded-lg border border-border bg-background shadow-sm">
+                        <div className="rounded-lg border border-border bg-background/60 shadow-sm">
                             <table className="min-w-full divide-y divide-border text-left">
                                 <thead className="bg-surface">
                                     <tr>
@@ -108,7 +108,7 @@ export default function Roles({ roles = [], permissions = [] }) {
                                         <th className="px-4 py-3 text-xs font-semibold text-foreground">Actions</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-border bg-background">
+                                <tbody className="divide-y divide-border bg-transparent">
                                     {roles.length > 0 ? (
                                         roles.map((role) => (
                                             <tr key={role.id} className="border-b border-border/80">

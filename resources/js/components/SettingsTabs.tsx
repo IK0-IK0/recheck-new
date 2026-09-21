@@ -9,6 +9,7 @@ export default function SettingsTabs() {
         { name: isAdmin ? 'User' : 'Institution', href: isAdmin ? '/settings/profile' : '/settings/institution', current: isAdmin ? url.startsWith('/settings/profile') : url.startsWith('/settings/institution') },
         { name: 'Database', href: '/settings/database', current: url.startsWith('/settings/database') },
         { name: 'Storage', href: '/settings/storage', current: url.startsWith('/settings/storage') },
+        ...(isAdmin ? [{ name: 'Documents', href: '/settings/api', current: url.startsWith('/settings/api') }] : []),
         { name: 'Security', href: '/settings/security', current: url.startsWith('/settings/security') },
         ...(!isAdmin ? [
             { name: 'Subscription', href: '/settings/subscription', current: url.startsWith('/settings/subscription') },

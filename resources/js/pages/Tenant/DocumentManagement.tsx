@@ -373,7 +373,7 @@ export default function DocumentManagement({ documents = [], currentStorageDrive
                             <option value="doc">Documents</option>
                         </select>
                     </div>
-                    <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-background shadow-sm">
+                    <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-background/60 shadow-sm">
                         <table className="min-w-full divide-y divide-border/80 text-center">
                             <thead className="border-b border-border bg-surface">
                                 <tr>
@@ -395,7 +395,7 @@ export default function DocumentManagement({ documents = [], currentStorageDrive
                                     <th className="border-l border-border/80 px-4 py-3 text-center text-xs font-semibold text-foreground">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-border bg-background">
+                            <tbody className="divide-y divide-border bg-transparent">
                                 {visibleDocuments.length > 0 ? visibleDocuments.map((document) => (
                                     <tr key={document.id} className="border-b border-border/80">
                                         <td className="px-4 py-3 text-left text-sm text-foreground">

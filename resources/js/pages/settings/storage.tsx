@@ -175,7 +175,7 @@ export default function Storage({ currentConfig, storageStatus }: Props) {
                 {/* Scrollable Content */}
                 <div className="flex-1 overflow-y-auto p-6">
                     <div className="mx-auto max-w-3xl">
-                        <div className="rounded-lg border border-border bg-background p-6 shadow-sm">
+                        <div className="rounded-lg border border-border bg-background/60 p-6 shadow-sm">
                             <div className="mb-4">
                                 <div className="flex items-center justify-between gap-3">
                                     <h2 className="text-sm font-semibold">Storage</h2>
@@ -337,7 +337,7 @@ export default function Storage({ currentConfig, storageStatus }: Props) {
                                                     </div>
 
                                                     {/* Bucket Selection Section */}
-                                                    <div className="rounded-md border border-border bg-muted/30 p-4">
+                                                    <div className="rounded-md border border-border bg-muted/20 p-4">
                                                         <div className="mb-3 flex items-center justify-between">
                                                             <div>
                                                                 <h3 className="text-xs font-semibold">Select Bucket</h3>
@@ -380,7 +380,7 @@ export default function Storage({ currentConfig, storageStatus }: Props) {
                                                                     name="bucket"
                                                                     value={bucket}
                                                                     onChange={(e) => setBucket(e.target.value)}
-                                                                    className="border-input bg-background text-sm shadow-xs outline-none transition focus-visible:border-ring focus-visible:ring-ring/50 mt-1 w-full rounded-md border px-3 py-2"
+                                                                    className="border-input bg-background/60 text-sm shadow-xs outline-none transition focus-visible:border-ring focus-visible:ring-ring/50 mt-1 w-full rounded-md border px-3 py-2"
                                                                     required
                                                                 >
                                                                     <option value="">Select a bucket...</option>

@@ -29,7 +29,7 @@ class SetupController extends Controller
             ]);
         }
 
-        $activeConfig = TenantDatabaseConfig::where('is_active', true)->first();
+        $activeConfig = TenantDatabaseConfig::activeForCurrentUser();
 
         // Determine which view to render based on the route
         $view = 'settings/institution';
@@ -82,14 +82,18 @@ class SetupController extends Controller
             'skip_test' => ['nullable', 'boolean'],
         ]);
 
-        $configModel = $request->user()->role === 'admin'
-            ? DatabaseConfig::class
-            : TenantDatabaseConfig::class;
+        $isAdmin = $request->user()->role === 'admin';
+        $configModel = $isAdmin ? DatabaseConfig::class : TenantDatabaseConfig::class;
 
-        $configModel::query()->update(['is_active' => false]);
+        $configQuery = $configModel::query();
+        if (! $isAdmin) {
+            $configQuery->where('tenant_id', $request->user()->getKey());
+        }
+        $configQuery->update(['is_active' => false]);
 
         // Create new active config
         $config = $configModel::create([
+            'tenant_id' => $isAdmin ? null : $request->user()->getKey(),
             'driver' => $validated['driver'],
             'host' => $validated['host'] ?? null,
             'port' => $validated['port'] ?? null,
@@ -105,7 +109,7 @@ class SetupController extends Controller
                 $this->testConnection($config);
             } catch (\Exception $e) {
                 $config->delete();
-                $configModel::query()->update(['is_active' => false]);
+                $configQuery->update(['is_active' => false]);
 
                 return redirect()->back()->withErrors([
                     'connection' => 'Failed to connect to database: '.$e->getMessage(),
@@ -123,7 +127,7 @@ class SetupController extends Controller
     {
         $config = $request->user()->role === 'admin'
             ? DatabaseConfig::where('is_active', true)->first()
-            : TenantDatabaseConfig::where('is_active', true)->first();
+            : TenantDatabaseConfig::activeForCurrentUser();
 
         if (! $config) {
             return redirect()->back()->withErrors([
@@ -162,7 +166,7 @@ class SetupController extends Controller
     private function getMigrationStatus(): array
     {
         try {
-            $config = TenantDatabaseConfig::where('is_active', true)->first();
+            $config = TenantDatabaseConfig::activeForCurrentUser();
 
             if (! $config) {
                 return ['status' => 'no_config'];

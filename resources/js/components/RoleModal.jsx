@@ -15,6 +15,8 @@ import {
 
 const defaultRoleInitialValues = { name: '', permissions: [] };
 
+const visibilityPermissionPattern = /(proposal|file).*(all|assigned|own)|(all|assigned|own).*(proposal|file)/i;
+
 export default function RoleModal({
     title = 'Create role',
     description = 'Add or edit a role and its permissions.',
@@ -39,7 +41,7 @@ export default function RoleModal({
             return;
         }
 
-        setValues(initialValues);
+        setValues({ ...defaultRoleInitialValues, ...initialValues });
         setError('');
     }, [dialogOpen]);
 
@@ -61,13 +63,24 @@ export default function RoleModal({
         }
     };
 
-    const togglePermission = (permissionId) => {
+    const togglePermission = (permissionId, isVisibilityPermission = false) => {
+        const selectedPermission = permissions.find((permission) => permission.id === permissionId);
+        const nextSelectedPermissions = isVisibilityPermission
+            ? values.permissions.filter((item) => {
+                const permission = permissions.find((candidate) => candidate.id === item);
+
+                return !permission || !visibilityPermissionPattern.test(permission.name);
+            })
+            : values.permissions;
         const nextPermissions = values.permissions.includes(permissionId)
-            ? values.permissions.filter((item) => item !== permissionId)
-            : [...values.permissions, permissionId];
+            ? nextSelectedPermissions.filter((item) => item !== permissionId)
+            : [...nextSelectedPermissions, permissionId];
 
         setValues({ ...values, permissions: nextPermissions });
     };
+
+    const visibilityPermissions = permissions.filter((permission) => visibilityPermissionPattern.test(permission.name));
+    const actionPermissions = permissions.filter((permission) => !visibilityPermissionPattern.test(permission.name));
 
     return (
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -98,18 +111,42 @@ export default function RoleModal({
 
                         <div className="grid gap-2">
                             <Label>Permissions</Label>
-                            <div className="grid gap-2 rounded-md border border-input p-3">
-                                {permissions.map((permission) => (
+                            <div className="space-y-4 rounded-md border border-input p-3">
+                                {visibilityPermissions.length > 0 ? (
+                                    <div className="grid gap-2">
+                                        <p className="text-xs font-semibold text-foreground">Proposal visibility</p>
+                                        {visibilityPermissions.map((permission) => (
+                                            <label key={permission.id} className="flex items-center gap-2 text-sm">
+                                                <input
+                                                    type="radio"
+                                                    name="proposal-visibility"
+                                                    checked={values.permissions.includes(permission.id)}
+                                                    onChange={() => togglePermission(permission.id, true)}
+                                                    className="h-4 w-4 border-input text-primary focus:ring-primary"
+                                                />
+                                                <span>{permission.name}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                ) : null}
+                                {actionPermissions.length > 0 ? (
+                                    <div className="grid gap-2">
+                                        {visibilityPermissions.length > 0 ? (
+                                            <p className="text-xs font-semibold text-foreground">Actions</p>
+                                        ) : null}
+                                        {actionPermissions.map((permission) => (
                                     <label key={permission.id} className="flex items-center gap-2 text-sm">
                                         <input
                                             type="checkbox"
                                             checked={values.permissions.includes(permission.id)}
-                                            onChange={() => togglePermission(permission.id)}
+                                            onChange={() => togglePermission(permission.id, false)}
                                             className="h-4 w-4 rounded border-input text-primary focus:ring-primary"
                                         />
                                         <span>{permission.name}</span>
                                     </label>
-                                ))}
+                                        ))}
+                                    </div>
+                                ) : null}
                             </div>
                         </div>
                     </div>

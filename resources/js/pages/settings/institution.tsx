@@ -52,7 +52,7 @@ export default function Institution({ institutionName, institutionEmail, themeCo
                 {/* Scrollable Content */}
                 <div className="flex-1 overflow-y-auto p-6">
                     <div className="mx-auto max-w-3xl">
-                        <div className="rounded-lg border border-border bg-background p-6 shadow-sm">
+                        <div className="rounded-lg border border-border bg-background/60 p-6 shadow-sm">
                             <Form
                                 id="institution-form"
                                 {...SetupController.update.form()}
@@ -81,7 +81,7 @@ export default function Institution({ institutionName, institutionEmail, themeCo
                                         <div className="flex items-start gap-6">
                                             <div className="flex-shrink-0">
                                                 <Label className="mb-2 block text-xs font-medium">Logo</Label>
-                                                <div className="flex size-24 items-center justify-center rounded-lg border-2 border-dashed border-border bg-muted">
+                                                <div className="flex size-24 items-center justify-center rounded-lg border-2 border-dashed border-border bg-muted/50">
                                                     <Upload className="size-6 text-muted-foreground" />
                                                 </div>
                                                 <Button type="button" variant="outline" size="sm" disabled className="mt-2 w-full h-7 text-xs">

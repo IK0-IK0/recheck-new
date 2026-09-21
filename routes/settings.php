@@ -1,18 +1,20 @@
 <?php
 
+use App\Http\Controllers\Settings\ApiController;
 use App\Http\Controllers\Settings\ProfileController;
 use App\Http\Controllers\Settings\SecurityController;
 use App\Http\Controllers\Settings\SetupController;
 use App\Http\Controllers\Settings\StorageController;
 use Illuminate\Auth\Middleware\RequirePassword;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware(['auth'])->group(function () {
-    Route::get('settings', function (Illuminate\Http\Request $request) {
+    Route::get('settings', function (Request $request) {
         return redirect($request->user()->role === 'admin' ? '/settings/profile' : '/settings/institution');
     });
 
-    Route::get('settings/institution', function (Illuminate\Http\Request $request) {
+    Route::get('settings/institution', function (Request $request) {
         if ($request->user()->role === 'admin') {
             return redirect()->route('profile.edit');
         }
@@ -35,6 +37,9 @@ Route::middleware(['auth'])->group(function () {
 
     Route::get('settings/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('settings/profile', [ProfileController::class, 'update'])->name('profile.update');
+    Route::get('settings/api', [ApiController::class, 'edit'])->name('api.edit');
+    Route::post('settings/api', [ApiController::class, 'update'])->name('api.update');
+    Route::post('settings/api/forms-detect', [ApiController::class, 'formsDetect'])->name('api.forms-detect');
 });
 
 Route::middleware(['auth', 'verified'])->group(function () {

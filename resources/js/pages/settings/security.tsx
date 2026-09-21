@@ -31,7 +31,7 @@ export default function Security(props: Props) {
             <div className="p-4">
                 <div className="mx-auto max-w-2xl space-y-3">
                 <Dialog>
-                    <div className="flex items-center justify-between rounded-lg border border-border bg-background px-4 py-3 shadow-sm">
+                    <div className="flex items-center justify-between rounded-lg border border-border bg-background/60 px-4 py-3 shadow-sm">
                         <div>
                             <h2 className="text-sm font-semibold">Update Password</h2>
                             <p className="mt-0.5 text-xs text-muted-foreground">Change your account password.</p>
@@ -128,7 +128,7 @@ export default function Security(props: Props) {
                 </Dialog>
 
                 <Dialog>
-                    <div className="flex items-center justify-between rounded-lg border border-border bg-background px-4 py-3 shadow-sm">
+                    <div className="flex items-center justify-between rounded-lg border border-border bg-background/60 px-4 py-3 shadow-sm">
                         <div>
                             <h2 className="text-sm font-semibold">Two-Factor Authentication</h2>
                             <p className="mt-0.5 text-xs text-muted-foreground">Manage your login verification settings.</p>

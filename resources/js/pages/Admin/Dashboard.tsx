@@ -153,13 +153,12 @@ export default function AdminDashboard({ users = [] }: Props) {
                                 <option value="not_configured">Not configured</option>
                             </select>
                         </div>
-                        <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-background shadow-sm">
+                        <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-background/60 shadow-sm">
                             <table className="min-w-full divide-y divide-border/80 text-center">
                                 <thead className="border-b border-border bg-surface">
                                     <tr>
                                         <th className="w-16 px-4 py-3 text-xs font-semibold" aria-label="Profile picture" />
                                         <th className="border-l border-border/80 px-4 py-3 text-left text-xs font-semibold"><button type="button" onClick={() => handleSort('name')} className="inline-flex items-center gap-1.5 hover:text-primary" aria-label="Sort by name">Name {sortIcon('name')}</button></th>
-                                        <th className="border-l border-border/80 px-4 py-3 text-xs font-semibold"><button type="button" onClick={() => handleSort('email')} className="inline-flex items-center gap-1.5 hover:text-primary" aria-label="Sort by email">Email {sortIcon('email')}</button></th>
                                         <th className="border-l border-border/80 px-4 py-3 text-xs font-semibold">Actions</th>
                                     </tr>
                                 </thead>
@@ -173,7 +172,6 @@ export default function AdminDashboard({ users = [] }: Props) {
                                                 </Avatar>
                                             </td>
                                             <td className="border-l border-border/80 px-4 py-3 text-left text-sm">{user.name}</td>
-                                            <td className="border-l border-border/80 px-4 py-3 text-sm text-muted-foreground">{user.email}</td>
                                             <td className="border-l border-border/80 px-4 py-3">
                                                 <div className="flex justify-center gap-2">
                                                     <Button variant="secondary" size="icon" className="size-7" onClick={() => openSubscription(user)} aria-label={`View ${user.name} subscription`} title={`View ${user.name} subscription`}><Eye className="size-3.5" /></Button>

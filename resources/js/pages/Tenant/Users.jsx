@@ -186,7 +186,7 @@ export default function Users({ users = [], roles = [] }) {
                                 </SelectContent>
                             </Select>
                         </div>
-                        <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-background shadow-sm">
+                        <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-background/60 shadow-sm">
                             <table className="min-w-full divide-y divide-border/80 text-center">
                                 <thead className="border-b border-border bg-surface">
                                     <tr>
@@ -208,7 +208,7 @@ export default function Users({ users = [], roles = [] }) {
                                         <th className="border-l border-border/80 px-4 py-3 text-center text-xs font-semibold text-foreground">Actions</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-border/80 bg-background">
+                                <tbody className="divide-y divide-border/80 bg-transparent">
                                     {isLoading ? (
                                         // Loading skeleton
                                         <>
