@@ -397,7 +397,7 @@ export default function DocumentManagement({ documents = [], currentStorageDrive
                             </thead>
                             <tbody className="divide-y divide-border bg-background">
                                 {visibleDocuments.length > 0 ? visibleDocuments.map((document) => (
-                                    <tr key={document.id}>
+                                    <tr key={document.id} className="border-b border-border/80">
                                         <td className="px-4 py-3 text-left text-sm text-foreground">
                                             <div className="flex items-center justify-start gap-2">
                                                 <FileKindIcon fileType={document.file_type} fileName={document.file_path || document.name} />

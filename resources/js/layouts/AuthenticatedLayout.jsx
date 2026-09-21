@@ -1,5 +1,6 @@
 import { Link, router, usePage } from '@inertiajs/react';
 import { logout } from '@/routes';
+import { applyUserTheme } from '@/hooks/use-appearance';
 
 export default function AuthenticatedLayout({ children }) {
     const { auth = {} } = usePage().props;
@@ -44,7 +45,10 @@ export default function AuthenticatedLayout({ children }) {
                         <p className="mt-2 text-base font-semibold">{userName}</p>
                         <button
                             type="button"
-                            onClick={() => router.post(logout())}
+                            onClick={() => {
+                                applyUserTheme('zinc');
+                                router.post(logout());
+                            }}
                             className="mt-4 w-full rounded-lg border border-border bg-transparent px-3 py-2 text-sm font-medium text-foreground transition hover:bg-muted"
                         >
                             Logout

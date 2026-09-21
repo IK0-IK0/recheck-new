@@ -40,7 +40,7 @@ class StorageServiceProvider extends ServiceProvider
         });
 
         try {
-            $activeConfig = StorageConfig::where('is_active', true)->first();
+            $activeConfig = StorageConfig::activeForCurrentUser();
 
             if ($activeConfig) {
                 $diskConfig = $activeConfig->toFilesystemConfig();

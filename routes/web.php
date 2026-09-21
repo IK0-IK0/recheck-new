@@ -11,8 +11,15 @@ Route::middleware(['auth', 'verified'])->group(function (): void {
     Route::inertia('dashboard', 'dashboard')->name('dashboard');
     Route::inertia('test', 'test')->name('test');
 
+    Route::middleware('admin')->prefix('admin')->group(function (): void {
+        Route::get('/', [Admin\DashboardController::class, 'index'])->name('admin.dashboard');
+        Route::post('/users', [Admin\DashboardController::class, 'store'])->name('admin.users.store');
+        Route::put('/users/{user}', [Admin\DashboardController::class, 'update'])->name('admin.users.update');
+        Route::delete('/users/{user}', [Admin\DashboardController::class, 'destroy'])->name('admin.users.destroy');
+    });
+
     // Tenant-scoped management area for all authenticated users.
-    Route::prefix('tenant')->group(function (): void {
+    Route::prefix('tenant')->middleware('tenant.setup')->group(function (): void {
         Route::controller(ProcessManagementController::class)->group(function (): void {
             Route::get('/processes', 'index')->name('tenant.processes.index');
             Route::post('/processes', 'storeProcess')->name('tenant.processes.store');

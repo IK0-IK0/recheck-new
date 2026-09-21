@@ -111,7 +111,7 @@ export default function Roles({ roles = [], permissions = [] }) {
                                 <tbody className="divide-y divide-border bg-background">
                                     {roles.length > 0 ? (
                                         roles.map((role) => (
-                                            <tr key={role.id}>
+                                            <tr key={role.id} className="border-b border-border/80">
                                                 <td className="px-4 py-3 text-sm text-foreground">{role.name}</td>
                                                 <td className="px-4 py-3 text-sm text-muted-foreground">
                                                     {role.permissions?.length > 0

@@ -1,7 +1,6 @@
 import { Form, Head, usePage } from '@inertiajs/react';
 import { Link } from '@inertiajs/react';
 import { useRef, useState } from 'react';
-import { toast } from 'sonner';
 import ProfileController from '@/actions/App/Http/Controllers/Settings/ProfileController';
 import SecurityController from '@/actions/App/Http/Controllers/Settings/SecurityController';
 import DeleteUser from '@/components/delete-user';
@@ -11,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { THEME_COLORS } from '@/constants/workflowConstants';
+import { cn } from '@/lib/utils';
 import { send } from '@/routes/verification';
 import type { Auth } from '@/types';
 
@@ -42,9 +42,12 @@ export default function Profile({
     status?: string;
 }) {
     const { auth } = usePage<PageProps>().props;
+    const isAdmin = auth.user.role === 'admin';
     const [themeColor, setThemeColor] = useState(
         auth.user.theme_color ?? 'zinc'
     );
+    const [themeColorChanged, setThemeColorChanged] = useState(false);
+    const [hoveredColor, setHoveredColor] = useState<string | null>(null);
     const passwordInput = useRef<HTMLInputElement>(null);
     const currentPasswordInput = useRef<HTMLInputElement>(null);
 
@@ -62,11 +65,13 @@ export default function Profile({
                             preserveScroll: true,
                         }}
                         onSuccess={() => {
-                            toast.success('Profile updated.');
+                            if (themeColorChanged) {
+                                window.location.reload();
+                            }
                         }}
                         className="space-y-4"
                     >
-                        {({ processing, errors }) => (
+                        {({ processing, errors, isDirty }) => (
                             <>
                                 <div className="grid gap-2">
                                     <Label htmlFor="name" className="text-xs">Name</Label>
@@ -99,42 +104,39 @@ export default function Profile({
 
                                 <div className="grid gap-2">
                                     <Label className="text-xs">Theme color</Label>
-                                    <div className="grid gap-2 sm:grid-cols-4">
+                                    <div className="flex w-full gap-1">
                                         {THEME_COLORS.map((color) => {
                                             const selected = themeColor === color;
+                                            const isHovered = hoveredColor === color;
+                                            const shouldExpand = isHovered || (selected && !hoveredColor);
 
                                             return (
                                                 <label
                                                     key={color}
-                                                    className={`group cursor-pointer rounded-lg border p-2.5 transition ${
-                                                        selected
-                                                            ? 'border-primary bg-primary/10'
-                                                            : 'border-border bg-background hover:border-foreground/70'
-                                                    }`}
+                                                    onMouseEnter={() => setHoveredColor(color)}
+                                                    onMouseLeave={() => setHoveredColor(null)}
+                                                    className={cn(
+                                                        'relative cursor-pointer overflow-hidden rounded-md transition-all duration-300 ease-in-out',
+                                                        'h-24',
+                                                        shouldExpand ? 'basis-16 flex-shrink-0 flex-grow-0' : 'basis-4 flex-grow flex-shrink'
+                                                    )}
                                                 >
                                                     <input
                                                         type="radio"
                                                         name="theme_color"
                                                         value={color}
                                                         checked={selected}
-                                                        onChange={() =>
-                                                            setThemeColor(color)
-                                                        }
+                                                        onChange={() => {
+                                                            setThemeColor(color);
+                                                            setThemeColorChanged(color !== (auth.user.theme_color ?? 'zinc'));
+                                                        }}
                                                         className="sr-only"
                                                     />
-                                                    <div
-                                                        className={`mb-1.5 h-7 w-full rounded-lg ${THEME_COLOR_CLASSES[color] ?? 'bg-muted'}`}
-                                                    />
-                                                    <div className="flex items-center justify-between text-xs">
-                                                        <span className="capitalize">
-                                                            {color}
-                                                        </span>
-                                                        {selected ? (
-                                                            <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                                                                Selected
-                                                            </span>
-                                                        ) : null}
-                                                    </div>
+                                                    <div className={cn(
+                                                        'relative flex h-full w-full flex-col items-center justify-center rounded-md transition-all duration-300',
+                                                        THEME_COLOR_CLASSES[color] ?? 'bg-muted',
+                                                        selected && 'ring-2 ring-inset ring-foreground'
+                                                    )} />
                                                 </label>
                                             );
                                         })}
@@ -164,9 +166,10 @@ export default function Profile({
 
                                 <div className="flex items-center gap-3 pt-2">
                                     <Button
-                                        disabled={processing}
+                                        disabled={processing || !isDirty}
                                         data-test="update-profile-button"
                                         size="sm"
+                                        variant={isDirty ? 'default' : 'outline'}
                                         className="h-8 text-xs"
                                     >
                                         Save Changes
@@ -177,7 +180,7 @@ export default function Profile({
                     </Form>
                 </div>
 
-                <div className="rounded-lg border border-border bg-background p-4 shadow-sm">
+                {!isAdmin && <div className="rounded-lg border border-border bg-background p-4 shadow-sm">
                     <h2 className="text-sm font-semibold mb-3">Update Password</h2>
                     <Form
                         {...SecurityController.update.form()}
@@ -185,9 +188,6 @@ export default function Profile({
                             preserveScroll: true,
                         }}
                         resetOnError={['password', 'password_confirmation', 'current_password']}
-                        onSuccess={() => {
-                            toast.success('Password updated.');
-                        }}
                         onError={(errors) => {
                             if (errors.password) {
                                 passwordInput.current?.focus();
@@ -256,9 +256,9 @@ export default function Profile({
                             </>
                         )}
                     </Form>
-                </div>
+                </div>}
 
-                <DeleteUser />
+                {!isAdmin && <DeleteUser />}
                 </div>
             </div>
         </>

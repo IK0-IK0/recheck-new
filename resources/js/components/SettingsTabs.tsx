@@ -2,15 +2,18 @@ import { Link, usePage } from '@inertiajs/react';
 import { cn } from '@/lib/utils';
 
 export default function SettingsTabs() {
-    const { url } = usePage();
+    const { url, props } = usePage();
+    const isAdmin = (props.auth as { user?: { role?: string } } | undefined)?.user?.role === 'admin';
 
     const tabs = [
-        { name: 'Institution', href: '/settings/institution', current: url.startsWith('/settings/institution') },
+        { name: isAdmin ? 'User' : 'Institution', href: isAdmin ? '/settings/profile' : '/settings/institution', current: isAdmin ? url.startsWith('/settings/profile') : url.startsWith('/settings/institution') },
         { name: 'Database', href: '/settings/database', current: url.startsWith('/settings/database') },
         { name: 'Storage', href: '/settings/storage', current: url.startsWith('/settings/storage') },
         { name: 'Security', href: '/settings/security', current: url.startsWith('/settings/security') },
-        { name: 'Subscription', href: '/settings/subscription', current: url.startsWith('/settings/subscription') },
-        { name: 'Notifications', href: '/settings/notifications', current: url.startsWith('/settings/notifications') },
+        ...(!isAdmin ? [
+            { name: 'Subscription', href: '/settings/subscription', current: url.startsWith('/settings/subscription') },
+            { name: 'Notifications', href: '/settings/notifications', current: url.startsWith('/settings/notifications') },
+        ] : []),
     ];
 
     return (

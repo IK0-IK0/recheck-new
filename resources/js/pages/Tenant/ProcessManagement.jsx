@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useForm } from '@inertiajs/react';
-import { Edit3, Plus, Trash2, ChevronDown, Workflow } from 'lucide-react';
+import { Edit3, FolderKanban, Plus, Trash2, ChevronDown, GitBranch, Workflow } from 'lucide-react';
 import { toast } from 'sonner';
 import PhaseComponent from '@/components/PhaseComponent';
 import ProcessModal from '@/components/ProcessModal';
@@ -422,7 +422,7 @@ export default function ProcessManagement({ processes = [], roles = [], document
                                 <div className="p-4 pb-3">
                                     <div className="mb-3 flex items-center justify-between">
                                         <div>
-                                            <p className="text-sm font-semibold text-foreground">{activeProcess.name}</p>
+                                            <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground"><FolderKanban className="size-3.5 text-primary" aria-hidden="true" />{activeProcess.name}</p>
                                             {activeProcess.description ? (
                                                 <p className="mt-0.5 text-xs text-muted-foreground">{activeProcess.description}</p>
                                             ) : null}
@@ -468,7 +468,8 @@ export default function ProcessManagement({ processes = [], roles = [], document
                             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
                                 <div className="flex-none flex items-center justify-between px-4 py-3 border-b border-border bg-surface">
                                     <div>
-                                        <p className="text-xs font-semibold text-foreground">
+                                        <p className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                                            <GitBranch className="size-3.5 text-primary" aria-hidden="true" />
                                             {activePhase ? activePhase.name : phases.length === 0 ? 'No phases yet' : 'Select a phase'}
                                         </p>
                                         <p className="text-[11px] text-muted-foreground">

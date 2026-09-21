@@ -1,4 +1,4 @@
-import { Head, router, useForm } from '@inertiajs/react';
+import { Head, router, useForm, usePage } from '@inertiajs/react';
 import { useState, useEffect } from 'react';
 import { CheckCircle2, AlertCircle, Info, PlayCircle, Loader2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -31,10 +31,15 @@ type Props = {
 };
 
 export default function Database({ currentConfig, migrationStatus }: Props) {
+    const { auth } = usePage<{ auth?: { user?: { id?: number | string } } }>().props;
+    const storageSuffix = auth?.user?.id ?? 'guest';
+    const formStorageKey = `database_setup_form_${storageSuffix}`;
+    const driversStorageKey = `database_setup_form_drivers_${storageSuffix}`;
+
     // Determine initial driver
     const getInitialDriver = () => {
         try {
-            const saved = localStorage.getItem('database_setup_form');
+            const saved = localStorage.getItem(formStorageKey);
             if (saved) {
                 const parsed = JSON.parse(saved);
                 return parsed.driver || currentConfig?.driver || 'sqlite';
@@ -51,7 +56,7 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
     const getSavedFormData = () => {
         try {
             // First, check per-driver storage
-            const savedDriversData = localStorage.getItem('database_setup_form_drivers');
+            const savedDriversData = localStorage.getItem(driversStorageKey);
             if (savedDriversData) {
                 const driversData = JSON.parse(savedDriversData);
                 const driverData = driversData[`${initialDriver}_data`];
@@ -61,7 +66,7 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
             }
 
             // Fallback to general saved form
-            const saved = localStorage.getItem('database_setup_form');
+            const saved = localStorage.getItem(formStorageKey);
             if (saved) {
                 return JSON.parse(saved);
             }
@@ -93,7 +98,7 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
         const timeoutId = setTimeout(() => {
             try {
                 const dataToSave = { ...data, password: '' }; // Never save password
-                localStorage.setItem('database_setup_form', JSON.stringify(dataToSave));
+                localStorage.setItem(formStorageKey, JSON.stringify(dataToSave));
             } catch (e) {
                 console.error('Error saving form data:', e);
             }
@@ -104,19 +109,19 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
 
     const handleDriverChange = (value) => {
         const currentDriver = driver;
-        const savedData = JSON.parse(localStorage.getItem('database_setup_form') || '{}');
+            const savedData = JSON.parse(localStorage.getItem(formStorageKey) || '{}');
         
         // Save current form state before switching
         const stateToSave = {
             [`${currentDriver}_data`]: { ...data, password: '' },
             ...savedData,
         };
-        localStorage.setItem('database_setup_form_drivers', JSON.stringify(stateToSave));
+        localStorage.setItem(driversStorageKey, JSON.stringify(stateToSave));
         
         setDriver(value);
 
         // Load saved data for the new driver, or use defaults
-        const savedDriversData = JSON.parse(localStorage.getItem('database_setup_form_drivers') || '{}');
+        const savedDriversData = JSON.parse(localStorage.getItem(driversStorageKey) || '{}');
         const savedForDriver = savedDriversData[`${value}_data`];
 
         if (savedForDriver) {
@@ -167,8 +172,8 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
                 toast.success('Database configuration saved successfully.');
                 setData('password', '');
                 // Clear localStorage drafts after successful save
-                localStorage.removeItem('database_setup_form');
-                localStorage.removeItem('database_setup_form_drivers');
+                localStorage.removeItem(formStorageKey);
+                localStorage.removeItem(driversStorageKey);
                 setShowWarningDialog(false);
                 setPendingSubmit(null);
             },
@@ -304,7 +309,12 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <span className="text-xs text-muted-foreground">Status:</span>
-                                        <span className={cn('text-xs font-medium', migrationStatusInfo.color)}>
+                                        <span className={cn('rounded-full border px-2 py-0.5 text-xs font-medium', migrationStatusInfo.color, {
+                                            'border-emerald-200': migrationStatus.status === 'migrated',
+                                            'border-amber-200': migrationStatus.status === 'not_migrated',
+                                            'border-destructive/30': migrationStatus.status === 'error',
+                                            'border-border': migrationStatus.status === 'no_config',
+                                        })}>
                                             {migrationStatusInfo.text}
                                         </span>
                                     </div>
@@ -504,14 +514,14 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
                                             : driver !== currentConfig.driver
                                             ? 'Save this configuration first'
                                             : migrationStatus.status === 'migrated'
-                                            ? 'All migrations complete'
+                                            ? 'Run to apply any pending migrations'
                                             : 'Run to create database tables'}
                                     </p>
                                 </div>
                                 <Button
                                     type="button"
                                     onClick={handleMigrate}
-                                    disabled={!currentConfig || driver !== currentConfig.driver || isMigrating || migrationStatus.status === 'migrated'}
+                                    disabled={!currentConfig || driver !== currentConfig.driver || isMigrating}
                                     size="sm"
                                     className="h-8"
                                 >
@@ -568,8 +578,8 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
                                     };
                                     setDriver(currentConfig.driver);
                                     setData(resetData);
-                                    localStorage.removeItem('database_setup_form');
-                                    localStorage.removeItem('database_setup_form_drivers');
+                                    localStorage.removeItem(formStorageKey);
+                                    localStorage.removeItem(driversStorageKey);
                                 }}
                                 disabled={processing}
                                 className="h-7 text-xs"

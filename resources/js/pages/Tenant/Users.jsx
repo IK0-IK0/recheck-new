@@ -234,7 +234,7 @@ export default function Users({ users = [], roles = [] }) {
                                         </>
                                     ) : visibleUsers.length > 0 ? (
                                         visibleUsers.map((user) => (
-                                            <tr key={user.id}>
+                                            <tr key={user.id} className="border-b border-border/80 transition-colors hover:bg-muted/30">
                                                 <td className="px-4 py-3 text-left text-sm text-foreground">{user.name}</td>
                                                 <td className="border-l border-border/80 px-4 py-3 text-center text-sm text-muted-foreground">{user.email}</td>
                                                 <td className="border-l border-border/80 px-4 py-3 text-center text-sm text-muted-foreground">
@@ -250,6 +250,7 @@ export default function Users({ users = [], roles = [] }) {
                                                             type="button"
                                                             onClick={() => handleEdit(user)}
                                                             aria-label={`Edit user ${user.name}`}
+                                                            title={`Edit user ${user.name}`}
                                                             className="h-7 text-xs"
                                                         >
                                                             <Edit3 className="size-3.5" />
@@ -260,6 +261,7 @@ export default function Users({ users = [], roles = [] }) {
                                                             type="button"
                                                             onClick={() => setUserToDelete(user)}
                                                             aria-label={`Delete user ${user.name}`}
+                                                            title={`Delete user ${user.name}`}
                                                             className="h-7 text-xs"
                                                         >
                                                             <Trash2 className="size-3.5" />

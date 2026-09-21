@@ -4,6 +4,10 @@ namespace App\Http\Middleware;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
+use App\Models\StorageConfig;
+use App\Models\TenantDatabaseConfig;
+use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\DB;
 use Inertia\Middleware;
 
 class HandleInertiaRequests extends Middleware
@@ -40,6 +44,24 @@ class HandleInertiaRequests extends Middleware
 
         $roles = [];
         $permissions = [];
+        $databaseReady = false;
+        $storageReady = false;
+
+        try {
+            $databaseConfig = $user?->role === 'admin'
+                ? null
+                : TenantDatabaseConfig::activeForCurrentUser();
+
+            if ($databaseConfig) {
+                Config::set('database.connections.tenant', $databaseConfig->toConnectionConfig());
+                DB::purge('tenant');
+                $databaseReady = DB::connection('tenant')->getSchemaBuilder()->hasTable('migrations');
+            }
+
+            $storageReady = StorageConfig::queryForCurrentUser()->where('is_active', true)->exists();
+        } catch (\Throwable) {
+            // Setup status is unavailable until the central database is ready.
+        }
 
         if ($user !== null && method_exists($user, 'roles')) {
             try {
@@ -67,6 +89,11 @@ class HandleInertiaRequests extends Middleware
                 'user' => $user,
                 'roles' => $roles,
                 'permissions' => $permissions,
+            ],
+            'setupStatus' => [
+                'database' => $databaseReady,
+                'storage' => $storageReady,
+                'complete' => $databaseReady && $storageReady,
             ],
             'sidebarOpen' => ! $request->hasCookie('sidebar_state') || $request->cookie('sidebar_state') === 'true',
         ];

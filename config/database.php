@@ -50,7 +50,7 @@ return [
         'tenant' => [
             'driver' => 'sqlite',
             'url' => env('TENANT_DB_URL'),
-            'database' => env('TENANT_DB_DATABASE', database_path('tenant.sqlite')),
+            'database' => env('TENANT_DB_DATABASE', database_path('institution.sqlite')),
             'prefix' => '',
             'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
             'busy_timeout' => null,

@@ -3,10 +3,25 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Crypt;
 
 class StorageConfig extends Model
 {
+    public static function activeForCurrentUser(): ?self
+    {
+        return static::queryForCurrentUser()->where('is_active', true)->first();
+    }
+
+    public static function queryForCurrentUser(): Builder
+    {
+        $model = auth()->user()?->role === 'admin'
+            ? self::class
+            : TenantStorageConfig::class;
+
+        return $model::on(config('database.default'));
+    }
+
     protected $fillable = [
         'driver',
         'root',

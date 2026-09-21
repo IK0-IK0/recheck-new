@@ -1,6 +1,8 @@
 import { usePage } from '@inertiajs/react';
 import type { ReactNode } from 'react';
+import { useEffect } from 'react';
 import { SidebarProvider } from '@/components/ui/sidebar';
+import { applyUserTheme } from '@/hooks/use-appearance';
 import type { AppVariant } from '@/types';
 
 type Props = {
@@ -9,7 +11,11 @@ type Props = {
 };
 
 export function AppShell({ children, variant = 'sidebar' }: Props) {
-    const isOpen = usePage().props.sidebarOpen;
+    const { auth, sidebarOpen: isOpen } = usePage().props;
+
+    useEffect(() => {
+        applyUserTheme(auth?.user?.theme_color);
+    }, [auth?.user?.theme_color]);
 
     if (variant === 'header') {
         return (

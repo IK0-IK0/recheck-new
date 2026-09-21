@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Settings;
 
 use App\Http\Controllers\Controller;
+use App\Models\DatabaseConfig;
 use App\Models\TenantDatabaseConfig;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -19,6 +20,15 @@ class SetupController extends Controller
      */
     public function edit(Request $request): Response
     {
+        if ($request->user()->role === 'admin' && $request->route()->getName() === 'database.edit') {
+            $activeConfig = DatabaseConfig::where('is_active', true)->first();
+
+            return Inertia::render('settings/database', [
+                'currentConfig' => $activeConfig,
+                'migrationStatus' => $this->getSuperadminMigrationStatus(),
+            ]);
+        }
+
         $activeConfig = TenantDatabaseConfig::where('is_active', true)->first();
 
         // Determine which view to render based on the route
@@ -28,7 +38,7 @@ class SetupController extends Controller
         }
 
         return Inertia::render($view, [
-            'institutionName' => $request->user()->institution_name,
+            'institutionName' => $request->user()->name,
             'institutionEmail' => $request->user()->email,
             'themeColor' => $request->user()->theme_color ?? 'zinc',
             'currentConfig' => $activeConfig,
@@ -49,9 +59,7 @@ class SetupController extends Controller
 
         $user = $request->user();
 
-        // Update both institution_name and name (for superadmin user)
         $user->fill([
-            'institution_name' => $validated['institution_name'],
             'name' => $validated['institution_name'],
             'theme_color' => $validated['theme_color'],
         ])->save();
@@ -74,11 +82,14 @@ class SetupController extends Controller
             'skip_test' => ['nullable', 'boolean'],
         ]);
 
-        // Deactivate all existing configs
-        TenantDatabaseConfig::query()->update(['is_active' => false]);
+        $configModel = $request->user()->role === 'admin'
+            ? DatabaseConfig::class
+            : TenantDatabaseConfig::class;
+
+        $configModel::query()->update(['is_active' => false]);
 
         // Create new active config
-        $config = TenantDatabaseConfig::create([
+        $config = $configModel::create([
             'driver' => $validated['driver'],
             'host' => $validated['host'] ?? null,
             'port' => $validated['port'] ?? null,
@@ -94,7 +105,7 @@ class SetupController extends Controller
                 $this->testConnection($config);
             } catch (\Exception $e) {
                 $config->delete();
-                TenantDatabaseConfig::query()->update(['is_active' => false]);
+                $configModel::query()->update(['is_active' => false]);
 
                 return redirect()->back()->withErrors([
                     'connection' => 'Failed to connect to database: '.$e->getMessage(),
@@ -108,9 +119,11 @@ class SetupController extends Controller
     /**
      * Run migrations on the tenant database.
      */
-    public function migrate(): RedirectResponse
+    public function migrate(Request $request): RedirectResponse
     {
-        $config = TenantDatabaseConfig::where('is_active', true)->first();
+        $config = $request->user()->role === 'admin'
+            ? DatabaseConfig::where('is_active', true)->first()
+            : TenantDatabaseConfig::where('is_active', true)->first();
 
         if (! $config) {
             return redirect()->back()->withErrors([
@@ -119,17 +132,19 @@ class SetupController extends Controller
         }
 
         try {
-            // Update tenant connection configuration
-            Config::set('database.connections.tenant', $config->toConnectionConfig());
-            DB::purge('tenant');
+            $isAdmin = $request->user()->role === 'admin';
+            $connection = $isAdmin ? 'admin_setup' : 'tenant';
+            $migrationPath = $isAdmin ? 'database/migrations/superadmin' : 'database/migrations/tenant';
+
+            Config::set("database.connections.{$connection}", $config->toConnectionConfig());
+            DB::purge($connection);
 
             // Test connection first
-            DB::connection('tenant')->getPdo();
+            DB::connection($connection)->getPdo();
 
-            // Run migrations
             \Artisan::call('migrate', [
-                '--database' => 'tenant',
-                '--path' => 'database/migrations/tenant',
+                '--database' => $connection,
+                '--path' => $migrationPath,
                 '--force' => true,
             ]);
 
@@ -166,6 +181,32 @@ class SetupController extends Controller
             return [
                 'status' => 'migrated',
                 'count' => $migrationsRun,
+            ];
+        } catch (\Exception $e) {
+            return ['status' => 'error', 'message' => $e->getMessage()];
+        }
+    }
+
+    private function getSuperadminMigrationStatus(): array
+    {
+        try {
+            $config = DatabaseConfig::where('is_active', true)->first();
+
+            if (! $config) {
+                return ['status' => 'no_config'];
+            }
+
+            Config::set('database.connections.admin_setup', $config->toConnectionConfig());
+            DB::purge('admin_setup');
+            $connection = DB::connection('admin_setup');
+
+            if (! $connection->getSchemaBuilder()->hasTable('migrations')) {
+                return ['status' => 'not_migrated'];
+            }
+
+            return [
+                'status' => 'migrated',
+                'count' => $connection->table('migrations')->count(),
             ];
         } catch (\Exception $e) {
             return ['status' => 'error', 'message' => $e->getMessage()];

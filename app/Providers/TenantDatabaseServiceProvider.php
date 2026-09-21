@@ -31,7 +31,11 @@ class TenantDatabaseServiceProvider extends ServiceProvider
                 return;
             }
 
-            $activeConfig = TenantDatabaseConfig::where('is_active', true)->first();
+            if (auth()->user()?->role === 'admin') {
+                return;
+            }
+
+            $activeConfig = TenantDatabaseConfig::activeForCurrentUser();
 
             if ($activeConfig) {
                 $this->configureTenantConnection($activeConfig);

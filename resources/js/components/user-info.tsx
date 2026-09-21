@@ -10,6 +10,11 @@ export function UserInfo({
     showEmail?: boolean;
 }) {
     const getInitials = useInitials();
+    const roleLabel = user.role === 'admin'
+        ? 'Administrator'
+        : user.role === 'institution'
+            ? 'Institution'
+            : user.role;
 
     return (
         <>
@@ -21,11 +26,15 @@ export function UserInfo({
             </Avatar>
             <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-medium">{user.name}</span>
-                {showEmail && (
+                {user.role ? (
+                    <span className="truncate text-xs text-muted-foreground">
+                        {roleLabel}
+                    </span>
+                ) : showEmail ? (
                     <span className="truncate text-xs text-muted-foreground">
                         {user.email}
                     </span>
-                )}
+                ) : null}
             </div>
         </>
     );

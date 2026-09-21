@@ -7,6 +7,40 @@ use Illuminate\Support\Facades\Crypt;
 
 class TenantDatabaseConfig extends Model
 {
+    public static function activeForCurrentUser(): ?self
+    {
+        $user = auth()->user();
+
+        if ($user?->role === 'admin') {
+            return DatabaseConfig::query()->where('is_active', true)->first();
+        }
+
+        if ($user === null) {
+            return null;
+        }
+
+        $config = static::query()->where('is_active', true)->first();
+
+        if ($config?->driver === 'sqlite' && ! self::sqliteDatabaseExists($config->database)) {
+            return null;
+        }
+
+        return $config;
+    }
+
+    private static function sqliteDatabaseExists(?string $database): bool
+    {
+        if ($database === null || $database === ':memory:') {
+            return true;
+        }
+
+        $path = str_starts_with($database, DIRECTORY_SEPARATOR) || preg_match('/^[A-Za-z]:[\\\\\/]/', $database)
+            ? $database
+            : base_path($database);
+
+        return is_file($path);
+    }
+
     protected $fillable = [
         'driver',
         'host',
@@ -66,6 +100,11 @@ class TenantDatabaseConfig extends Model
                 \PDO::ATTR_EMULATE_PREPARES => true,
             ];
         } elseif ($this->driver === 'sqlite') {
+            $database = $this->database;
+            if ($database !== null && $database !== ':memory:' && ! str_starts_with($database, DIRECTORY_SEPARATOR) && ! preg_match('/^[A-Za-z]:[\\\\\/]/', $database)) {
+                $database = base_path($database);
+            }
+            $config['database'] = $database;
             $config['url'] = null;
             $config['busy_timeout'] = null;
             $config['journal_mode'] = null;

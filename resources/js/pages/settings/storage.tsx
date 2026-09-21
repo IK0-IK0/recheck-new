@@ -31,6 +31,11 @@ type StorageConfig = {
 
 type Props = {
     currentConfig?: StorageConfig;
+    storageStatus?: {
+        ready: boolean;
+        status: 'connected' | 'not_configured';
+        message: string;
+    };
 };
 
 const drivers: { value: StorageDriver; label: string; description: string }[] = [
@@ -38,7 +43,7 @@ const drivers: { value: StorageDriver; label: string; description: string }[] = 
     { value: 's3', label: 'S3 Compatible', description: 'AWS S3, Supabase, MinIO, etc.' },
 ];
 
-export default function Storage({ currentConfig }: Props) {
+export default function Storage({ currentConfig, storageStatus }: Props) {
     const [selectedDriver, setSelectedDriver] = useState<StorageDriver>(
         currentConfig?.driver ?? 'local'
     );
@@ -172,9 +177,16 @@ export default function Storage({ currentConfig }: Props) {
                     <div className="mx-auto max-w-3xl">
                         <div className="rounded-lg border border-border bg-background p-6 shadow-sm">
                             <div className="mb-4">
-                                <h2 className="text-sm font-semibold">Storage</h2>
+                                <div className="flex items-center justify-between gap-3">
+                                    <h2 className="text-sm font-semibold">Storage</h2>
+                                    <span className={storageStatus?.ready
+                                        ? 'rounded-full border border-emerald-200 px-2 py-0.5 text-xs font-medium text-emerald-600'
+                                        : 'rounded-full border border-amber-200 px-2 py-0.5 text-xs font-medium text-amber-600'}>
+                                        {storageStatus?.status === 'connected' ? 'Connected' : 'Not configured'}
+                                    </span>
+                                </div>
                                 <p className="mt-0.5 text-xs text-muted-foreground">
-                                    Choose where documents and uploaded files are stored.
+                                    {storageStatus?.message ?? 'Choose where documents and uploaded files are stored.'}
                                 </p>
                             </div>
 

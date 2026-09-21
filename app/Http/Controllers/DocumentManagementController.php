@@ -23,7 +23,7 @@ class DocumentManagementController extends Controller
      */
     private function getStorageDisk(): string
     {
-        $activeConfig = StorageConfig::where('is_active', true)->first();
+        $activeConfig = StorageConfig::activeForCurrentUser();
 
         if (! $activeConfig) {
             return 'local'; // Fallback to local if no config
@@ -133,7 +133,7 @@ class DocumentManagementController extends Controller
         $reference = (string) Str::uuid();
 
         try {
-            $config = StorageConfig::where('is_active', true)->first();
+            $config = StorageConfig::activeForCurrentUser();
 
             if (! $config) {
                 return response()->json(['error' => 'No active storage configuration was found.'], 422);
@@ -191,7 +191,7 @@ class DocumentManagementController extends Controller
         $reference = $validated['reference'];
 
         try {
-            $config = StorageConfig::where('is_active', true)->first();
+            $config = StorageConfig::activeForCurrentUser();
 
             if (! $config) {
                 return response()->json(['error' => 'No active storage configuration was found.'], 422);

@@ -8,9 +8,17 @@ use Illuminate\Auth\Middleware\RequirePassword;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware(['auth'])->group(function () {
-    Route::redirect('settings', '/settings/institution');
+    Route::get('settings', function (Illuminate\Http\Request $request) {
+        return redirect($request->user()->role === 'admin' ? '/settings/profile' : '/settings/institution');
+    });
 
-    Route::get('settings/institution', [SetupController::class, 'edit'])->name('institution.edit');
+    Route::get('settings/institution', function (Illuminate\Http\Request $request) {
+        if ($request->user()->role === 'admin') {
+            return redirect()->route('profile.edit');
+        }
+
+        return app(SetupController::class)->edit($request);
+    })->name('institution.edit');
     Route::patch('settings/institution', [SetupController::class, 'update'])->name('institution.update');
 
     Route::get('settings/database', [SetupController::class, 'edit'])->name('database.edit');

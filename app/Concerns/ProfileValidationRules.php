@@ -44,8 +44,8 @@ trait ProfileValidationRules
             'email',
             'max:255',
             $userId === null
-                ? Rule::unique('institution_users', 'email')
-                : Rule::unique('institution_users', 'email')->ignore($userId),
+                ? Rule::unique('users', 'email')
+                : Rule::unique('users', 'email')->ignore($userId),
         ];
     }
 

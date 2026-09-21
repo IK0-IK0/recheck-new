@@ -4,11 +4,13 @@ namespace App\Http\Controllers\Settings;
 
 use App\Http\Controllers\Controller;
 use App\Models\StorageConfig;
+use App\Models\TenantStorageConfig;
 use Aws\S3\S3Client;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -21,10 +23,25 @@ class StorageController extends Controller
      */
     public function edit(Request $request): Response
     {
-        $activeConfig = StorageConfig::where('is_active', true)->first();
+        $activeConfig = $this->storageConfigTableExists()
+            ? $this->storageQuery()->where('is_active', true)->first()
+            : null;
+        $storageTableExists = $this->storageConfigTableExists();
+        $storageMessage = 'Storage configuration is not migrated yet.';
+
+        if ($storageTableExists) {
+            $storageMessage = $activeConfig
+                ? 'Connection verified during the last save.'
+                : 'Storage setup is required.';
+        }
 
         return Inertia::render('settings/storage', [
             'currentConfig' => $activeConfig,
+            'storageStatus' => [
+                'ready' => $activeConfig !== null,
+                'status' => $activeConfig ? 'connected' : 'not_configured',
+                'message' => $storageMessage,
+            ],
         ]);
     }
 
@@ -33,6 +50,12 @@ class StorageController extends Controller
      */
     public function store(Request $request): RedirectResponse
     {
+        if (! $this->storageConfigTableExists()) {
+            return redirect()->back()->withErrors([
+            'connection' => 'Storage configuration is not available. Run the central migrations first.',
+            ]);
+        }
+
         $validated = $request->validate([
             'driver' => ['required', 'string', Rule::in(['local', 's3'])],
             'root' => ['nullable', 'string', 'required_if:driver,local'],
@@ -44,10 +67,10 @@ class StorageController extends Controller
         ]);
 
         // Deactivate all existing configs
-        StorageConfig::query()->update(['is_active' => false]);
+        $this->storageQuery()->update(['is_active' => false]);
 
         // Create new active config
-        $config = StorageConfig::create([
+        $config = $this->storageQuery()->create([
             'driver' => $validated['driver'],
             'root' => $validated['root'] ?? null,
             'endpoint' => $validated['endpoint'] ?? null,
@@ -205,6 +228,33 @@ class StorageController extends Controller
 
         Config::set('filesystems.default', $config->driver);
         Config::set('filesystems.disks.'.$config->driver, $diskConfig);
+    }
+
+    private function storageConnection(): string
+    {
+        return config('database.default');
+    }
+
+    private function storageQuery()
+    {
+        $model = request()->user()?->role === 'admin'
+            ? StorageConfig::class
+            : TenantStorageConfig::class;
+
+        return $model::on($this->storageConnection());
+    }
+
+    private function storageConfigTableExists(): bool
+    {
+        try {
+            $table = request()->user()?->role === 'admin'
+                ? 'storage_configs'
+                : 'tenant_storage_configs';
+
+            return Schema::connection($this->storageConnection())->hasTable($table);
+        } catch (\Throwable) {
+            return false;
+        }
     }
 
     /**

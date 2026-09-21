@@ -60,6 +60,17 @@ const subscribe = (callback: () => void) => {
 
 const notify = (): void => listeners.forEach((listener) => listener());
 
+const themeColors = ['zinc', 'slate', 'stone', 'gray', 'neutral', 'red', 'rose', 'orange', 'amber', 'yellow', 'lime', 'green', 'teal'];
+
+export const applyUserTheme = (themeColor?: string | null): void => {
+    if (typeof document === 'undefined') {
+        return;
+    }
+
+    document.documentElement.classList.remove(...themeColors.map((color) => `theme-${color}`));
+    document.documentElement.classList.add(`theme-${themeColors.includes(themeColor ?? '') ? themeColor : 'zinc'}`);
+};
+
 const mediaQuery = (): MediaQueryList | null => {
     if (typeof window === 'undefined') {
         return null;
