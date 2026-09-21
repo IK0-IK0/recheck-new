@@ -31,7 +31,7 @@ abstract class TestCase extends BaseTestCase
 
         $this->artisan('migrate:fresh', [
             '--database' => 'tenant',
-            '--path' => 'database/migrations/tenant',
+            '--path' => 'database/migrations/institution',
             '--drop-views' => false,
             '--drop-types' => false,
         ]);

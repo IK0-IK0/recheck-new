@@ -5,8 +5,6 @@ import { toast } from 'sonner';
 import StorageController from '@/actions/App/Http/Controllers/Settings/StorageController';
 import InputError from '@/components/input-error';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
     Dialog,
     DialogContent,
@@ -15,6 +13,8 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 type StorageDriver = 'local' | 's3';
 
@@ -59,7 +59,7 @@ export default function Storage({ currentConfig, storageStatus }: Props) {
     const [region, setRegion] = useState(currentConfig?.region || 'us-east-1');
     const [bucket, setBucket] = useState(currentConfig?.bucket || '');
     const [secretKey, setSecretKey] = useState(currentConfig?.secret_key || '');
-    const [root, setRoot] = useState(currentConfig?.root || '');
+    const [root, setRoot] = useState(currentConfig?.root || 'storage/app/private');
 
     const selectDriver = (driver: StorageDriver) => {
         setSelectedDriver(driver);
@@ -79,10 +79,12 @@ export default function Storage({ currentConfig, storageStatus }: Props) {
     const fetchBuckets = async () => {
         if (!endpoint || !accessKey || !secretKey) {
             toast.error('Please enter endpoint, access key, and secret key first');
+
             return;
         }
 
         setLoadingBuckets(true);
+
         try {
             const response = await fetch('/settings/storage/buckets/list', {
                 method: 'POST',
@@ -102,6 +104,7 @@ export default function Storage({ currentConfig, storageStatus }: Props) {
 
             if (response.ok) {
                 setBuckets(data.buckets || []);
+
                 if (data.buckets?.length === 0) {
                     toast.warning('No buckets found. Please create a bucket first.');
                 } else {
@@ -120,10 +123,12 @@ export default function Storage({ currentConfig, storageStatus }: Props) {
     const createBucket = async () => {
         if (!newBucketName) {
             toast.error('Please enter a bucket name');
+
             return;
         }
 
         setCreatingBucket(true);
+
         try {
             const response = await fetch('/settings/storage/buckets/create', {
                 method: 'POST',
@@ -162,6 +167,7 @@ export default function Storage({ currentConfig, storageStatus }: Props) {
 
     const handleSubmit = () => {
         const form = document.getElementById('storage-form') as HTMLFormElement;
+
         if (form) {
             form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
         }

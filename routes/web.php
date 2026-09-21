@@ -3,6 +3,7 @@
 use App\Http\Controllers\Admin;
 use App\Http\Controllers\DocumentManagementController;
 use App\Http\Controllers\ProcessManagementController;
+use App\Http\Controllers\ProposalController;
 use Illuminate\Support\Facades\Route;
 
 Route::inertia('/', 'welcome')->name('home');
@@ -44,6 +45,15 @@ Route::middleware(['auth', 'verified'])->group(function (): void {
             Route::get('/documents/{document}/view-url', 'viewUrl')->name('tenant.documents.view-url');
             Route::get('/documents/{document}/view', 'view')->name('tenant.documents.view');
             Route::delete('/documents/{document}', 'destroy')->name('tenant.documents.destroy');
+        });
+
+        Route::controller(ProposalController::class)->group(function (): void {
+            Route::get('/proposals', 'index')->name('tenant.proposals.index');
+            Route::post('/proposals', 'store')->name('tenant.proposals.store');
+            Route::get('/proposals/{proposal}', 'show')->name('tenant.proposals.show');
+            Route::post('/proposals/{proposal}/documents', 'storeDocument')->name('tenant.proposals.documents.store');
+            Route::delete('/proposals/{proposal}/documents/{document}', 'destroyDocument')->name('tenant.proposals.documents.destroy');
+            Route::post('/proposals/{proposal}/submit', 'submit')->name('tenant.proposals.submit');
         });
 
         Route::resource('users', Admin\UserManagementController::class)->only(['index', 'update', 'destroy']);

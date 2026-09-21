@@ -41,13 +41,16 @@ export default function DatabaseConfigModal({
     const getInitialDriver = () => {
         try {
             const saved = localStorage.getItem('database_setup_form');
+
             if (saved) {
                 const parsed = JSON.parse(saved);
+
                 return parsed.driver || currentConfig?.driver || 'sqlite';
             }
         } catch (e) {
             console.error('Error loading saved driver:', e);
         }
+
         return currentConfig?.driver || 'sqlite';
     };
 
@@ -56,15 +59,18 @@ export default function DatabaseConfigModal({
     const getSavedFormData = () => {
         try {
             const savedDriversData = localStorage.getItem('database_setup_form_drivers');
+
             if (savedDriversData) {
                 const driversData = JSON.parse(savedDriversData);
                 const driverData = driversData[`${initialDriver}_data`];
+
                 if (driverData) {
                     return driverData;
                 }
             }
 
             const saved = localStorage.getItem('database_setup_form');
+
             if (saved) {
                 return JSON.parse(saved);
             }
@@ -165,6 +171,7 @@ export default function DatabaseConfigModal({
     const handleMigrate = () => {
         if (!currentConfig) {
             toast.error('Please save database configuration first.');
+
             return;
         }
 
@@ -183,6 +190,7 @@ export default function DatabaseConfigModal({
                     } else {
                         toast.error('Migration failed.');
                     }
+
                     setIsMigrating(false);
                 },
             }
