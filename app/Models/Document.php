@@ -51,4 +51,14 @@ class Document extends Model
     {
         return $this->belongsToMany(Action::class, 'action_document', 'document_id', 'action_id');
     }
+
+    /**
+     * The proposals that have this document attached.
+     *
+     * @return BelongsToMany<Proposal, $this>
+     */
+    public function proposals(): BelongsToMany
+    {
+        return $this->belongsToMany(Proposal::class, 'proposal_documents', 'document_id', 'proposal_id');
+    }
 }

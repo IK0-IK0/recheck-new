@@ -1,5 +1,4 @@
 import { Link, usePage } from '@inertiajs/react';
-import { useState } from 'react';
 import {
     BookOpen,
     CheckCircle2,
@@ -12,10 +11,14 @@ import {
     Shield,
     Settings2,
     Users,
+    ClipboardList,
 } from 'lucide-react';
+import { useState } from 'react';
 import AppLogo from '@/components/app-logo';
 import { NavFooter } from '@/components/nav-footer';
 import { NavUser } from '@/components/nav-user';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
     Sidebar,
     SidebarContent,
@@ -25,8 +28,6 @@ import {
     SidebarMenuButton,
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
-import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { dashboard } from '@/routes';
 import type { NavItem } from '@/types';
 
@@ -35,6 +36,11 @@ const mainNavItems: NavItem[] = [
         title: 'Dashboard',
         href: dashboard(),
         icon: LayoutGrid,
+    },
+    {
+        title: 'Proposals',
+        href: '/tenant/proposals',
+        icon: ClipboardList,
     },
     {
         title: 'Processes',

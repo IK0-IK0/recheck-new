@@ -2,8 +2,8 @@ import { Head, router, useForm } from '@inertiajs/react';
 import { ArrowDown, ArrowDownAZ, ArrowUp, Building2, CalendarDays, CreditCard, Eye, Plus, Search, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -61,6 +61,7 @@ export default function AdminDashboard({ users = [] }: Props) {
     const handleSort = (column: 'name' | 'email') => {
         if (sortColumn === column) {
             setSortDirection((currentDirection) => currentDirection === 'asc' ? 'desc' : 'asc');
+
             return;
         }
 

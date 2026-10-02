@@ -1,6 +1,6 @@
 import { router } from '@inertiajs/react';
-import { useEffect, useState } from 'react';
 import { ArrowDown, ArrowDownAZ, ArrowUp, Download, Edit3, Eye, FileText, FileSpreadsheet, FileType2, LoaderCircle, Search, Trash2, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import DocumentUploadModal from '@/components/DocumentUploadModal';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 
 type DocumentRecord = {
     id: number;
@@ -78,6 +79,7 @@ const uploadFileWithProgress = (url: string, file: File, onProgress: (progress: 
     request.addEventListener('load', () => {
         if (request.status >= 200 && request.status < 300) {
             resolve();
+
             return;
         }
 
@@ -297,6 +299,7 @@ export default function DocumentManagement({ documents = [], currentStorageDrive
         const handleSort = (column: SortColumn) => {
             if (sortColumn === column) {
                 setSortDirection((currentDirection) => currentDirection === 'asc' ? 'desc' : 'asc');
+
                 return;
             }
 

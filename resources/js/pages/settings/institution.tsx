@@ -39,6 +39,7 @@ export default function Institution({ institutionName, institutionEmail, themeCo
 
     const handleSubmit = () => {
         const form = document.getElementById('institution-form') as HTMLFormElement;
+
         if (form) {
             form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
         }

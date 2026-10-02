@@ -1,11 +1,8 @@
 import { Head, router, useForm, usePage } from '@inertiajs/react';
-import { useState, useEffect } from 'react';
 import { CheckCircle2, AlertCircle, Info, PlayCircle, Loader2, AlertTriangle } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { cn } from '@/lib/utils';
 import {
     Dialog,
     DialogContent,
@@ -14,6 +11,9 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { cn } from '@/lib/utils';
 
 type Props = {
     currentConfig?: {
@@ -40,13 +40,16 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
     const getInitialDriver = () => {
         try {
             const saved = localStorage.getItem(formStorageKey);
+
             if (saved) {
                 const parsed = JSON.parse(saved);
+
                 return parsed.driver || currentConfig?.driver || 'sqlite';
             }
         } catch (e) {
             console.error('Error loading saved driver:', e);
         }
+
         return currentConfig?.driver || 'sqlite';
     };
 
@@ -57,9 +60,11 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
         try {
             // First, check per-driver storage
             const savedDriversData = localStorage.getItem(driversStorageKey);
+
             if (savedDriversData) {
                 const driversData = JSON.parse(savedDriversData);
                 const driverData = driversData[`${initialDriver}_data`];
+
                 if (driverData) {
                     return driverData;
                 }
@@ -67,6 +72,7 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
 
             // Fallback to general saved form
             const saved = localStorage.getItem(formStorageKey);
+
             if (saved) {
                 return JSON.parse(saved);
             }
@@ -160,6 +166,7 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
         if (currentConfig && migrationStatus.status === 'migrated') {
             setPendingSubmit(e);
             setShowWarningDialog(true);
+
             return;
         }
         
@@ -183,6 +190,7 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
                 } else {
                     toast.error('Failed to save database configuration.');
                 }
+
                 setShowWarningDialog(false);
                 setPendingSubmit(null);
             },
@@ -201,6 +209,7 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
     const handleMigrate = () => {
         if (!currentConfig) {
             toast.error('Please save database configuration first.');
+
             return;
         }
 
@@ -216,6 +225,7 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
                 } else {
                     toast.error('Migration failed.');
                 }
+
                 setIsMigrating(false);
             },
         });
