@@ -1,7 +1,7 @@
 import { Form, Head } from '@inertiajs/react';
-import { CheckCircle2, KeyRound, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, FileText, KeyRound, ShieldCheck } from 'lucide-react';
 import InputError from '@/components/input-error';
-import PdfApiConnectionTest from '@/components/PdfApiConnectionTest';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,9 +12,13 @@ type Props = {
         publicKey: boolean;
         secretKey: boolean;
     };
+    apiTest?: {
+        status: 'success' | 'error';
+        message: string;
+    };
 };
 
-export default function ApiSettings({ iloveApiConfigured }: Props) {
+export default function ApiSettings({ iloveApiConfigured, apiTest }: Props) {
     const isConfigured = iloveApiConfigured.publicKey && iloveApiConfigured.secretKey;
 
     return (
@@ -42,6 +46,14 @@ export default function ApiSettings({ iloveApiConfigured }: Props) {
                         <div className="flex items-start justify-between gap-4 border-b border-border mb-5">
                         </div>
 
+                        {apiTest && (
+                            <Alert variant={apiTest.status === 'error' ? 'destructive' : 'default'} className="mb-5 bg-transparent">
+                                {apiTest.status === 'success' && <CheckCircle2 />}
+                                <AlertDescription>{apiTest.message}</AlertDescription>
+                            </Alert>
+                        )}
+
+
                         <Form action="/settings/api" method="post" options={{ preserveScroll: true }} className="space-y-5">
                             {({ processing, errors }) => (
                                 <>
@@ -61,6 +73,16 @@ export default function ApiSettings({ iloveApiConfigured }: Props) {
                                             Keys are encrypted before storage.
                                         </div>
                                         <div className="flex items-center gap-2">
+                                            <Button
+                                                formAction="/settings/api/test"
+                                                formMethod="post"
+                                                type="submit"
+                                                variant="outline"
+                                                disabled={processing || !isConfigured}
+                                                size="sm"
+                                            >
+                                                Test connection
+                                            </Button>
                                             <Button disabled={processing} size="sm">
                                                 <CheckCircle2 className="size-4" />
                                                 Save credentials
@@ -71,8 +93,6 @@ export default function ApiSettings({ iloveApiConfigured }: Props) {
                             )}
                         </Form>
                     </div>
-
-                    <PdfApiConnectionTest configured={isConfigured} />
 
                 </div>
             </div>

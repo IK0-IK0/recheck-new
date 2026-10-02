@@ -56,8 +56,11 @@ export default function RoleModal({
         setProcessing(true);
 
         try {
-            await onSubmit?.(values);
-            setDialogOpen(false);
+            const submitted = await onSubmit?.(values);
+
+            if (submitted !== false) {
+                setDialogOpen(false);
+            }
         } finally {
             setProcessing(false);
         }

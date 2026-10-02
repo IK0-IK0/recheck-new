@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useEffect, useState } from 'react';
+import { useCallback, useMemo, useEffect, useRef, useState } from 'react';
 import {
     ReactFlow,
     Background,
@@ -13,7 +13,7 @@ import {
     BaseEdge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Edit3, Trash2, FileCheck, FileText, Clock } from 'lucide-react';
+import { Edit3, Trash2, FileCheck, FileText, Clock, Maximize2, Minimize2, Plus } from 'lucide-react';
 
 // Custom edge for deny arrows with deeper curve
 function DenyEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style = {}, markerEnd, label, labelBgStyle, labelStyle }) {
@@ -284,10 +284,35 @@ const edgeTypes = {
     deny: DenyEdge,
 };
 
-export default function ActionsFlowGraph({ actions = [], onEdit, onDelete, onReorder, nextPhase = null, currentPhaseName = null }) {
+export default function ActionsFlowGraph({ actions = [], onEdit, onDelete, onReorder, onAddAction, nextPhase = null, currentPhaseName = null }) {
     const [draggedNodeId, setDraggedNodeId] = useState(null);
     const [previewIndex, setPreviewIndex] = useState(null);
     const [isReordering, setIsReordering] = useState(false);
+    const [isFullscreen, setIsFullscreen] = useState(false);
+    const graphRef = useRef(null);
+
+    useEffect(() => {
+        const handleFullscreenChange = () => {
+            setIsFullscreen(document.fullscreenElement === graphRef.current);
+        };
+
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+
+        return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    }, []);
+
+    const toggleFullscreen = async () => {
+        if (!graphRef.current) {
+            return;
+        }
+
+        if (document.fullscreenElement) {
+            await document.exitFullscreen();
+            return;
+        }
+
+        await graphRef.current.requestFullscreen();
+    };
 
     // Convert actions to nodes and edges (horizontal layout)
     const { nodes: initialNodes, edges: initialEdges } = useMemo(() => {
@@ -700,9 +725,34 @@ export default function ActionsFlowGraph({ actions = [], onEdit, onDelete, onReo
         [actions, onReorder, setNodes, initialNodes]
     );
 
+    const graphControls = (
+        <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
+            {onAddAction ? (
+                <button
+                    type="button"
+                    onClick={onAddAction}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background/90 px-2.5 text-xs font-medium text-foreground shadow-sm backdrop-blur transition-colors hover:bg-muted"
+                >
+                    <Plus className="size-3.5" />
+                    Add action
+                </button>
+            ) : null}
+            <button
+                type="button"
+                onClick={toggleFullscreen}
+                className="flex size-8 items-center justify-center rounded-md border border-border bg-background/90 text-foreground shadow-sm backdrop-blur transition-colors hover:bg-muted"
+                aria-label={isFullscreen ? 'Exit fullscreen' : 'View nodes fullscreen'}
+                title={isFullscreen ? 'Exit fullscreen' : 'View nodes fullscreen'}
+            >
+                {isFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+            </button>
+        </div>
+    );
+
     if (!actions || actions.length === 0) {
         return (
-            <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-border bg-muted/30">
+            <div className="relative flex h-full items-center justify-center rounded-xl border border-dashed border-border bg-muted/30">
+                {graphControls}
                 <div className="text-center space-y-2">
                     <Clock className="mx-auto size-12 text-muted-foreground/50" />
                     <p className="text-sm text-muted-foreground">No actions in this phase yet.</p>
@@ -713,7 +763,11 @@ export default function ActionsFlowGraph({ actions = [], onEdit, onDelete, onReo
     }
 
     return (
-        <div className="h-full w-full rounded-xl border border-border bg-background overflow-hidden relative">
+        <div
+            ref={graphRef}
+            className="relative h-full w-full overflow-hidden rounded-xl border border-border bg-background fullscreen:bg-background"
+        >
+            {graphControls}
             <ReactFlow
                 nodes={nodes}
                 edges={edges}

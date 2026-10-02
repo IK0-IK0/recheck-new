@@ -34,10 +34,10 @@ export default function AppSidebarLayout({
             <AppSidebar />
             <AppContent variant="sidebar" className="relative overflow-x-hidden bg-black">
                 <Silk
-                    speed={10}
-                    scale={0.35}
+                    speed={5}
+                    scale={0.1}
                     color={silkColor}
-                    noiseIntensity={0.15}
+                    noiseIntensity={0}
                     rotation={0}
                     className="pointer-events-none absolute inset-0 z-0 opacity-50"
                 />

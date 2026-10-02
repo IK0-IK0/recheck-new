@@ -466,7 +466,7 @@ export default function ProcessManagement({ processes = [], roles = [], document
 
                             {/* Actions flow graph - fills remaining space */}
                             <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-                                <div className="flex-none flex items-center justify-between px-4 py-3 border-b border-border bg-surface">
+                                <div className="flex-none flex items-center justify-between px-4 py-3 border-border bg-surface">
                                     <div>
                                         <p className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
                                             <GitBranch className="size-3.5 text-primary" aria-hidden="true" />
@@ -483,18 +483,6 @@ export default function ProcessManagement({ processes = [], roles = [], document
                                     </div>
                                     {activePhase ? (
                                         <div className="flex items-center gap-2">
-                                            <Button
-                                                variant="default"
-                                                size="sm"
-                                                onClick={() => {
-                                                    setSelectedPhase(activePhase);
-                                                    setIsCreateActionOpen(true);
-                                                }}
-                                                type="button"
-                                                className="h-7 text-xs"
-                                            >
-                                                <Plus className="size-3.5" /> Add action
-                                            </Button>
                                             <Button
                                                 variant="secondary"
                                                 size="sm"
@@ -534,6 +522,10 @@ export default function ProcessManagement({ processes = [], roles = [], document
                                     {activePhase ? (
                                         <ActionsFlowGraph
                                             actions={activePhase.actions ?? []}
+                                            onAddAction={() => {
+                                                setSelectedPhase(activePhase);
+                                                setIsCreateActionOpen(true);
+                                            }}
                                             onEdit={(action) => {
                                                 setEditingAction({ action, phase: activePhase });
                                                 setIsEditActionOpen(true);

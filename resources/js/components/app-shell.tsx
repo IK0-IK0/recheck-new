@@ -28,7 +28,7 @@ type Props = {
 };
 
 export function AppShell({ children, variant = 'sidebar' }: Props) {
-    const { auth, sidebarOpen: isOpen } = usePage().props;
+    const { auth, sidebarOpen: isOpen } = usePage<{ auth?: { user?: { theme_color?: string | null } }; sidebarOpen?: boolean }>().props;
     const silkColor = THEME_COLORS[auth?.user?.theme_color ?? 'zinc'] ?? THEME_COLORS.zinc;
 
     useEffect(() => {
@@ -39,10 +39,10 @@ export function AppShell({ children, variant = 'sidebar' }: Props) {
         return (
             <div className="relative flex min-h-screen w-full flex-col overflow-hidden bg-[#27272a]">
                 <Silk
-                    speed={3}
-                    scale={0.35}
+                    speed={0.1}
+                    scale={1}
                     color={silkColor}
-                    noiseIntensity={1.15}
+                    noiseIntensity={7.8}
                     rotation={0}
                     className="pointer-events-none absolute inset-0 z-0"
                 />
@@ -54,10 +54,10 @@ export function AppShell({ children, variant = 'sidebar' }: Props) {
     return (
         <div className="relative min-h-screen overflow-hidden bg-[#27272a]">
             <Silk
-                speed={3}
+                speed={0.1}
                 scale={0.35}
                 color={silkColor}
-                noiseIntensity={1.15}
+                noiseIntensity={7.8}
                 rotation={0}
                 className="pointer-events-none absolute inset-0 z-0"
             />

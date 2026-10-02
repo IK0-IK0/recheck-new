@@ -24,11 +24,13 @@ export default function Roles({ roles = [], permissions = [] }) {
 
     const handleSubmit = async (values) => {
         form.clearErrors();
-        form.setData(values);
+        let succeeded = false;
 
         if (editingRole) {
+            form.transform(() => values);
             await form.put(`/tenant/roles/${editingRole.id}`, {
                 onSuccess: () => {
+                    succeeded = true;
                     toast.success('Role updated.');
                     setEditingRole(null);
                     setIsRoleModalOpen(false);
@@ -37,17 +39,21 @@ export default function Roles({ roles = [], permissions = [] }) {
                     toast.error('Unable to update role.');
                 },
             });
-            return;
+            return succeeded;
         }
 
+        form.transform(() => values);
         await form.post('/tenant/roles', {
             onSuccess: () => {
+                succeeded = true;
                 toast.success('Role created.');
             },
             onError: () => {
                 toast.error('Unable to create role.');
             },
         });
+
+        return succeeded;
     };
 
     const handleEdit = (role) => {

@@ -4,13 +4,11 @@ namespace App\Http\Controllers\Settings;
 
 use App\Http\Controllers\Controller;
 use App\Models\AdminApiConfig;
-use App\Services\IlovePdfService;
-use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
 use Inertia\Inertia;
 use Inertia\Response;
-use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 class ApiController extends Controller
 {
@@ -25,6 +23,7 @@ class ApiController extends Controller
                 'publicKey' => filled($config?->ilove_public_key),
                 'secretKey' => filled($config?->ilove_secret_key),
             ],
+            'apiTest' => $request->session()->get('apiTest'),
         ]);
     }
 
@@ -50,49 +49,63 @@ class ApiController extends Controller
         return to_route('api.edit');
     }
 
-    public function formsDetect(Request $request, IlovePdfService $ilovePdfService): SymfonyResponse|JsonResponse
+    public function test(Request $request): RedirectResponse
     {
         abort_unless($request->user()->role === 'admin', 403);
 
         $config = AdminApiConfig::query()->first();
 
         if (! $config?->ilove_public_key || ! $config->ilove_secret_key) {
-            return response()->json(['message' => 'Save both iLovePDF keys before testing the connection.'], 422);
+            return to_route('api.edit')->with('apiTest', [
+                'status' => 'error',
+                'message' => 'Save both iLovePDF keys before testing the connection.',
+            ]);
         }
-
-        $validated = $request->validate([
-            'pdf' => ['required', 'file', 'mimes:pdf', 'max:10240'],
-        ]);
-
-        $renamedFiles = [];
 
         try {
-            $temporaryPath = $validated['pdf']->getRealPath();
-            $pdfPath = dirname($temporaryPath).DIRECTORY_SEPARATOR.'ilovepdf-forms.pdf';
+            $token = $this->createToken($config->ilove_public_key, $config->ilove_secret_key);
+            $response = Http::acceptJson()
+                ->withToken($token)
+                ->timeout(15)
+                ->get('https://api.ilovepdf.com/v1/start/compress/eu');
 
-            if (! rename($temporaryPath, $pdfPath)) {
-                throw new \RuntimeException('Unable to prepare the uploaded PDF for iLovePDF.');
+            if ($response->failed()) {
+                $message = $response->json('error.message')
+                    ?? $response->json('message')
+                    ?? 'iLovePDF rejected the credentials.';
+
+                throw new \RuntimeException((string) $message);
             }
-            $renamedFiles[$pdfPath] = $temporaryPath;
 
-            $detectedFormsPdf = $ilovePdfService->detectForms(
-                $pdfPath,
-                $config->ilove_public_key,
-                $config->ilove_secret_key,
-            );
-
-            return response($detectedFormsPdf, 200, [
-                'Content-Type' => 'application/pdf',
-                'Content-Disposition' => 'attachment; filename="forms-detected.pdf"',
+            return to_route('api.edit')->with('apiTest', [
+                'status' => 'success',
+                'message' => 'iLovePDF connection verified successfully.',
             ]);
         } catch (\Throwable $exception) {
-            return response()->json(['message' => 'iLovePDF form detection failed: '.$exception->getMessage()], 502);
-        } finally {
-            foreach ($renamedFiles as $pdfPath => $temporaryPath) {
-                if (is_file($pdfPath)) {
-                    rename($pdfPath, $temporaryPath);
-                }
-            }
+            return to_route('api.edit')->with('apiTest', [
+                'status' => 'error',
+                'message' => 'iLovePDF connection failed: '.$exception->getMessage(),
+            ]);
         }
     }
+
+    private function createToken(string $publicKey, string $secretKey): string
+    {
+        $header = $this->base64UrlEncode(json_encode(['typ' => 'JWT', 'alg' => 'HS256'], JSON_THROW_ON_ERROR));
+        $payload = $this->base64UrlEncode(json_encode([
+            'iss' => $publicKey,
+            'aud' => 'api.ilovepdf.com',
+            'iat' => now()->timestamp,
+            'exp' => now()->addMinutes(5)->timestamp,
+        ], JSON_THROW_ON_ERROR));
+        $signature = hash_hmac('sha256', $header.'.'.$payload, $secretKey, true);
+
+        return $header.'.'.$payload.'.'.$this->base64UrlEncode($signature);
+    }
+
+    private function base64UrlEncode(string $value): string
+    {
+        return rtrim(strtr(base64_encode($value), '+/', '-_'), '=');
+    }
+
 }
