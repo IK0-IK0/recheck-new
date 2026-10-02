@@ -27,7 +27,7 @@ export default function ConfirmPassword() {
                             <InputError message={errors.password} />
                         </div>
 
-                        <div className="flex items-center">
+                        <div className="flex items-center gap-20">
                             <Button
                                 className="w-full"
                                 disabled={processing}

@@ -42,8 +42,10 @@ class RoleManagementController extends Controller
     /**
      * Update the role's name and sync its permission IDs.
      */
-    public function update(Request $request, Role $role): RedirectResponse
+    public function update(Request $request, Role|int|string $role): RedirectResponse
     {
+        $role = $role instanceof Role ? $role : Role::query()->findOrFail((int) $role);
+
         $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'permissions' => ['array'],
@@ -58,8 +60,10 @@ class RoleManagementController extends Controller
     /**
      * Delete the role, detaching all permission_role and role_user pivot records.
      */
-    public function destroy(Role $role): RedirectResponse
+    public function destroy(Role|int|string $role): RedirectResponse
     {
+        $role = $role instanceof Role ? $role : Role::query()->findOrFail((int) $role);
+
         $role->permissions()->detach();
         $role->users()->detach();
         $role->delete();

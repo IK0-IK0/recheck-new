@@ -9,6 +9,7 @@ export default function SettingsTabs() {
         { name: isAdmin ? 'User' : 'Institution', href: isAdmin ? '/settings/profile' : '/settings/institution', current: isAdmin ? url.startsWith('/settings/profile') : url.startsWith('/settings/institution') },
         { name: 'Database', href: '/settings/database', current: url.startsWith('/settings/database') },
         { name: 'Storage', href: '/settings/storage', current: url.startsWith('/settings/storage') },
+        ...(isAdmin ? [{ name: 'Documents', href: '/settings/api', current: url.startsWith('/settings/api') }] : []),
         { name: 'Security', href: '/settings/security', current: url.startsWith('/settings/security') },
         ...(!isAdmin ? [
             { name: 'Subscription', href: '/settings/subscription', current: url.startsWith('/settings/subscription') },
@@ -17,13 +18,13 @@ export default function SettingsTabs() {
     ];
 
     return (
-        <div className="grid grid-cols-2 px-4 sm:grid-cols-3 sm:px-6 lg:grid-cols-6">
+        <div className="grid w-full grid-cols-2 items-center justify-items-center px-4 sm:grid-cols-3 sm:px-6 lg:grid-cols-6">
             {tabs.map((tab) => (
                 <Link
                     key={tab.name}
                     href={tab.href}
                     className={cn(
-                        'relative flex items-center justify-center px-2 py-2.5 text-center text-sm font-medium transition-colors sm:px-3',
+                        'relative flex w-full items-center justify-center px-2 py-2.5 text-center text-sm font-medium transition-colors sm:px-3',
                         tab.current
                             ? 'text-primary'
                             : 'text-muted-foreground hover:text-foreground'

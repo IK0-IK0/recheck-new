@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import DocumentUploadModal from '@/components/DocumentUploadModal';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
     Dialog,
     DialogClose,
@@ -364,18 +366,18 @@ export default function DocumentManagement({ documents = [], currentStorageDrive
                                 </button>
                             )}
                         </div>
-                        <select
-                            value={labelFilter}
-                            onChange={(event) => setLabelFilter(event.target.value)}
-                            aria-label="Filter by label"
-                            className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
-                        >
-                            <option value="all">All labels</option>
-                            <option value="form">Forms</option>
-                            <option value="doc">Documents</option>
-                        </select>
+                        <Select value={labelFilter} onValueChange={setLabelFilter}>
+                            <SelectTrigger className="w-full sm:w-[180px]" aria-label="Filter by label">
+                                <SelectValue placeholder="All labels" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">All labels</SelectItem>
+                                <SelectItem value="form">Forms</SelectItem>
+                                <SelectItem value="doc">Documents</SelectItem>
+                            </SelectContent>
+                        </Select>
                     </div>
-                    <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-background shadow-sm">
+                    <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-background/60 shadow-sm">
                         <table className="min-w-full divide-y divide-border/80 text-center">
                             <thead className="border-b border-border bg-surface">
                                 <tr>
@@ -397,7 +399,7 @@ export default function DocumentManagement({ documents = [], currentStorageDrive
                                     <th className="border-l border-border/80 px-4 py-3 text-center text-xs font-semibold text-foreground">Actions</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-border bg-background">
+                            <tbody className="divide-y divide-border bg-transparent">
                                 {visibleDocuments.length > 0 ? visibleDocuments.map((document) => (
                                     <tr key={document.id} className="border-b border-border/80">
                                         <td className="px-4 py-3 text-left text-sm text-foreground">

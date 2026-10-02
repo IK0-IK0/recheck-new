@@ -14,7 +14,7 @@ export default function Subscription() {
 
             <div className="p-3">
                 <div className="mx-auto max-w-2xl">
-                    <section className="overflow-hidden rounded-lg border border-border bg-background shadow-sm">
+                    <section className="overflow-hidden rounded-lg border border-border bg-background/60 shadow-sm">
                         <div className="border-b border-border px-4 py-3">
                             <div>
                                 <h2 className="text-sm font-semibold">Subscription</h2>
@@ -24,7 +24,7 @@ export default function Subscription() {
 
                         <div className="grid gap-px bg-border sm:grid-cols-3">
                             {details.map((detail) => (
-                                <div key={detail.label} className="bg-background px-4 py-3">
+                                <div key={detail.label} className="bg-background/40 px-4 py-3">
                                     <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{detail.label}</p>
                                     <p className="mt-1 text-sm font-medium">{detail.value}</p>
                                 </div>

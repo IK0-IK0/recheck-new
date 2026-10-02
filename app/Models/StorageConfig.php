@@ -15,14 +15,18 @@ class StorageConfig extends Model
 
     public static function queryForCurrentUser(): Builder
     {
-        $model = auth()->user()?->role === 'admin'
-            ? self::class
-            : TenantStorageConfig::class;
+        $user = auth()->user();
+        $isAdmin = $user?->role === 'admin';
+        $model = $isAdmin ? self::class : TenantStorageConfig::class;
+        $query = $model::on(config('database.default'));
 
-        return $model::on(config('database.default'));
+        return $isAdmin
+            ? $query
+            : $query->where('tenant_id', $user?->getKey());
     }
 
     protected $fillable = [
+        'tenant_id',
         'driver',
         'root',
         'endpoint',

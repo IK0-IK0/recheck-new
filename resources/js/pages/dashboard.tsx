@@ -26,7 +26,7 @@ export default function Dashboard() {
                 {/* Main Content */}
                 <div className="flex-1 overflow-y-auto">
                     <div className="mx-auto max-w-6xl p-4 space-y-4">
-                        <div className="rounded-lg border border-border bg-background p-4 shadow-sm">
+                        <div className="rounded-lg border border-border bg-background/60 p-4 shadow-sm">
                             <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                                 Welcome back
                             </p>

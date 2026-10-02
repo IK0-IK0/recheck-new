@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Settings;
 
 use App\Http\Controllers\Controller;
 use App\Models\StorageConfig;
-use App\Models\TenantStorageConfig;
 use Aws\S3\S3Client;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -70,6 +69,7 @@ class StorageController extends Controller
 
         // Create new active config
         $config = $this->storageQuery()->create([
+            'tenant_id' => $request->user()?->role === 'admin' ? null : $request->user()?->getKey(),
             'driver' => $validated['driver'],
             'root' => $validated['root'] ?? null,
             'endpoint' => $validated['endpoint'] ?? null,
@@ -236,11 +236,7 @@ class StorageController extends Controller
 
     private function storageQuery()
     {
-        $model = request()->user()?->role === 'admin'
-            ? StorageConfig::class
-            : TenantStorageConfig::class;
-
-        return $model::on($this->storageConnection());
+        return StorageConfig::queryForCurrentUser();
     }
 
     private function storageConfigTableExists(): bool

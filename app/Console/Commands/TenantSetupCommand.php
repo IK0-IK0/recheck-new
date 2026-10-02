@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\TenantDatabaseConfig;
+use Database\Seeders\TenantPermissionSeeder;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
@@ -121,6 +122,7 @@ class TenantSetupCommand extends Command
             }
 
             if ($exitCode === 0) {
+                $this->call(TenantPermissionSeeder::class);
                 $this->newLine();
                 $this->components->success('Tenant database setup completed successfully!');
 

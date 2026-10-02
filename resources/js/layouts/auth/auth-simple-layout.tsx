@@ -1,6 +1,8 @@
 import { Link, usePage } from '@inertiajs/react';
+import { ArrowLeft } from 'lucide-react';
 import AppLogoIcon from '@/components/app-logo-icon';
 import Silk from '@/components/Silk';
+import { Button } from '@/components/ui/button';
 import { home } from '@/routes';
 import type { AuthLayoutProps } from '@/types';
 
@@ -39,6 +41,20 @@ export default function AuthSimpleLayout({
                 className="pointer-events-none absolute inset-0 z-0"
             />
             <div className="relative z-10 w-full max-w-sm rounded-2xl border border-white/15 bg-black/20 p-6 shadow-2xl backdrop-blur-md md:p-8">
+                {title === 'Confirm password' && (
+                    <div className="mb-6 flex justify-start">
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Go back"
+                            title="Go back"
+                            onClick={() => window.history.back()}
+                        >
+                            <ArrowLeft className="size-4" />
+                        </Button>
+                    </div>
+                )}
                 <div className="flex flex-col gap-8">
                     <div className="flex flex-col items-center gap-4">
                         <Link

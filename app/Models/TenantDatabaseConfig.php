@@ -19,7 +19,10 @@ class TenantDatabaseConfig extends Model
             return null;
         }
 
-        $config = static::query()->where('is_active', true)->first();
+        $config = static::query()
+            ->where('tenant_id', $user->getKey())
+            ->where('is_active', true)
+            ->first();
 
         if ($config?->driver === 'sqlite' && ! self::sqliteDatabaseExists($config->database)) {
             return null;
@@ -42,6 +45,7 @@ class TenantDatabaseConfig extends Model
     }
 
     protected $fillable = [
+        'tenant_id',
         'driver',
         'host',
         'port',

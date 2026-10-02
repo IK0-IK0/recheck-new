@@ -309,7 +309,7 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
                     <div className="mx-auto max-w-3xl space-y-4">
                         {/* Current Status Card */}
                         {currentConfig && (
-                            <div className="rounded-lg border border-border bg-background p-3 shadow-sm">
+                            <div className="rounded-lg border border-border bg-background/60 p-3 shadow-sm">
                                 <div className="flex items-center justify-between">
                                     <div>
                                         <h3 className="text-xs font-semibold">Current Configuration</h3>
@@ -334,7 +334,7 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
 
                     {/* Configuration Form */}
                     <form id="database-form" onSubmit={handleSubmit} className="space-y-4">
-                        <div className="rounded-lg border border-border bg-background shadow-sm">
+                        <div className="rounded-lg border border-border bg-background/60 shadow-sm">
                             {/* Tabs */}
                             <div className="flex border-b border-border">
                                 <button
@@ -443,7 +443,7 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
                                                     <div className="w-full border-t border-border" />
                                                 </div>
                                                 <div className="relative flex justify-center">
-                                                    <span className="bg-background px-2 text-xs text-muted-foreground">Credentials</span>
+                                                    <span className="bg-background/60 px-2 text-xs text-muted-foreground">Credentials</span>
                                                 </div>
                                             </div>
 
@@ -506,7 +506,7 @@ export default function Database({ currentConfig, migrationStatus }: Props) {
                         )}
 
                         {/* Migration Runner Box */}
-                        <div className="rounded-lg border border-border bg-background shadow-sm">
+                        <div className="rounded-lg border border-border bg-background/60 shadow-sm">
                             <div className="flex items-center justify-between p-3">
                                 <div className="flex-1">
                                     <div className="flex items-center gap-2">

@@ -57,7 +57,7 @@ export default function Profile({
             
             <div className="p-6">
                 <div className="mx-auto max-w-2xl space-y-4">
-                <div className="rounded-lg border border-border bg-background p-4 shadow-sm">
+                <div className="rounded-lg border border-border bg-background/60 p-4 shadow-sm">
                     <h2 className="text-sm font-semibold mb-3">Profile Information</h2>
                     <Form
                         {...ProfileController.update.form()}
@@ -180,7 +180,7 @@ export default function Profile({
                     </Form>
                 </div>
 
-                {!isAdmin && <div className="rounded-lg border border-border bg-background p-4 shadow-sm">
+                {!isAdmin && <div className="rounded-lg border border-border bg-background/60 p-4 shadow-sm">
                     <h2 className="text-sm font-semibold mb-3">Update Password</h2>
                     <Form
                         {...SecurityController.update.form()}

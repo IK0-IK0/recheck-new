@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Settings\ProfileController;
+use App\Http\Controllers\Settings\ApiController;
 use App\Http\Controllers\Settings\SecurityController;
 use App\Http\Controllers\Settings\SetupController;
 use App\Http\Controllers\Settings\StorageController;
@@ -36,6 +37,9 @@ Route::middleware(['auth'])->group(function () {
 
     Route::get('settings/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('settings/profile', [ProfileController::class, 'update'])->name('profile.update');
+    Route::get('settings/api', [ApiController::class, 'edit'])->name('api.edit');
+    Route::post('settings/api', [ApiController::class, 'update'])->name('api.update');
+    Route::post('settings/api/test', [ApiController::class, 'test'])->name('api.test');
 });
 
 Route::middleware(['auth', 'verified'])->group(function () {
