@@ -195,25 +195,25 @@ export default function Welcome() {
             <Head title="Research ethics workflows, all in one platform" />
             <main className="min-h-[100dvh] overflow-hidden bg-[#f3f3ff] p-4 text-[#111c2c] sm:p-6 lg:p-10">
                 <div className="mx-auto grid min-h-[calc(100dvh-2rem)] w-full max-w-[1320px] overflow-hidden rounded-[12px] bg-white shadow-[0_22px_70px_rgba(71,66,155,0.12)] sm:min-h-[calc(100dvh-3rem)] lg:min-h-[calc(100dvh-5rem)] lg:grid-cols-[0.92fr_1.08fr]">
-                    <section className="flex min-h-[620px] flex-col px-7 pt-7 pb-7 sm:px-12 sm:pt-10 lg:min-h-0 lg:px-[16%] lg:pt-9 lg:pb-8">
+                    <section className="flex min-h-[620px] flex-col px-7 pt-7 pb-7 sm:px-12 sm:pt-10 lg:min-h-0 lg:px-[10%] lg:pt-9 lg:pb-8">
                         <header className="flex items-center justify-between">
                             <Link
                                 href="/"
-                                className="flex items-center gap-2.5"
+                                className="flex items-center gap-3"
                                 aria-label="RECHECK home"
                             >
-                                <span className="flex size-8 items-center justify-center text-[#182338]">
+                                <span className="flex size-11 items-center justify-center text-[#182338]">
                                     <Scale
-                                        className="size-4"
+                                        className="size-6"
                                         strokeWidth={1.8}
                                     />
                                 </span>
-                                <span className="text-[13px] font-bold tracking-[-0.04em] text-[#182338]">
-                                    UIC RECheck
+                                <span className="text-[15px] font-bold tracking-[-0.04em] text-[#182338]">
+                                    RECheck
                                 </span>
                             </Link>
                         </header>
-                        <div className="my-auto max-w-[490px] py-16 lg:py-12">
+                        <div className="my-auto max-w-[490px] py-10 lg:py-8">
                             <h1 className="max-w-[465px] text-[clamp(2.65rem,5vw,4.5rem)] leading-[0.97] font-semibold tracking-[-0.07em] text-[#182338]">
                                 Research ethics workflows,
                                 <br />
@@ -242,15 +242,6 @@ export default function Welcome() {
                                 </Link>
                             </div>
                         </div>
-                        <footer className="border-t border-[#edf0f4] pt-4 text-[11px] text-[#8997a8]">
-                            Need assistance?{' '}
-                            <a
-                                className="font-semibold text-[#5b4cf4] underline decoration-[#d9d6ff] underline-offset-2 hover:text-[#4138c9]"
-                                href="mailto:secretariat@recheck.com"
-                            >
-                                Contact REC Secretariat
-                            </a>
-                        </footer>
                     </section>
                     <section
                         id="workflow"
