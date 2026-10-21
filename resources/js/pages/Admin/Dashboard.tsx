@@ -1,5 +1,5 @@
 import { Head, router, useForm } from '@inertiajs/react';
-import { ArrowDown, ArrowDownAZ, ArrowUp, Building2, CalendarDays, CreditCard, Eye, Plus, Search, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowDownAZ, ArrowUp, Building2, CreditCard, Eye, Plus, Search, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -18,11 +18,22 @@ type AdminUser = {
     avatar?: string | null;
     theme_color?: string | null;
     subscription_status?: 'configured' | 'not_configured';
+    setup_summary?: string;
 };
 
 type Props = { users?: AdminUser[] };
 
-const emptyForm = { name: '', email: '', password: '', role: 'institution' as 'admin' | 'institution', theme_color: 'zinc' };
+const emptyForm = {
+    name: 'Organization One',
+    email: 'user.gmail.com',
+    password: 'user123',
+    role: 'institution' as 'admin' | 'institution',
+    theme_color: 'zinc',
+    template_user_id: 'default',
+    copy_dashboard: true,
+    copy_layout: true,
+    copy_settings: true,
+};
 
 const themeColorClasses: Record<string, string> = {
     zinc: 'bg-zinc-600', slate: 'bg-slate-600', stone: 'bg-stone-600', gray: 'bg-gray-600', neutral: 'bg-neutral-600',
@@ -32,6 +43,7 @@ const themeColorClasses: Record<string, string> = {
 
 export default function AdminDashboard({ users = [] }: Props) {
     const getInitials = useInitials();
+    const [institutionUsers, setInstitutionUsers] = useState(users);
     const [query, setQuery] = useState('');
     const [subscriptionFilter, setSubscriptionFilter] = useState('all');
     const [sortColumn, setSortColumn] = useState<'name' | 'email'>('name');
@@ -41,7 +53,7 @@ export default function AdminDashboard({ users = [] }: Props) {
     const [isSubscriptionOpen, setIsSubscriptionOpen] = useState(false);
     const form = useForm(emptyForm);
 
-    const visibleUsers = users
+    const visibleUsers = institutionUsers
         .filter((user) => {
             const normalizedQuery = query.trim().toLowerCase();
             const matchesSearch = normalizedQuery === ''
@@ -92,16 +104,26 @@ export default function AdminDashboard({ users = [] }: Props) {
 
     const submit = (event: React.FormEvent) => {
         event.preventDefault();
-        const options = {
-            onSuccess: () => {
-                toast.success('Account created.');
-                setIsCreateOpen(false);
-                form.reset();
-            },
-            onError: () => toast.error('Unable to save account.'),
+        const template = institutionUsers.find((user) => String(user.id) === form.data.template_user_id);
+        const copiedSetup = [
+            form.data.copy_dashboard && 'dashboard',
+            form.data.copy_layout && 'layout',
+            form.data.copy_settings && 'settings',
+        ].filter(Boolean).join(', ');
+        const createdUser: AdminUser = {
+            id: Date.now(),
+            name: form.data.name,
+            email: form.data.email,
+            role: 'institution',
+            theme_color: form.data.copy_settings ? template?.theme_color ?? form.data.theme_color : form.data.theme_color,
+            subscription_status: 'not_configured',
+            setup_summary: copiedSetup === '' ? undefined : `Copied ${copiedSetup}${template ? ` from ${template.name}` : ''}`,
         };
 
-        form.post('/admin/users', options);
+        setInstitutionUsers((currentUsers) => [...currentUsers, createdUser]);
+        setIsCreateOpen(false);
+        form.reset();
+        toast.success('Account added to this preview. Nothing was saved.');
     };
 
     const deleteUser = (user: AdminUser) => {
@@ -172,7 +194,10 @@ export default function AdminDashboard({ users = [] }: Props) {
                                                     <AvatarFallback className="bg-primary/10 text-xs font-semibold text-primary">{getInitials(user.name)}</AvatarFallback>
                                                 </Avatar>
                                             </td>
-                                            <td className="border-l border-border/80 px-4 py-3 text-left text-sm">{user.name}</td>
+                                            <td className="border-l border-border/80 px-4 py-3 text-left text-sm">
+                                                <div>{user.name}</div>
+                                                {user.setup_summary && <div className="mt-1 text-xs text-muted-foreground">{user.setup_summary}</div>}
+                                            </td>
                                             <td className="border-l border-border/80 px-4 py-3">
                                                 <div className="flex justify-center gap-2">
                                                     <Button variant="secondary" size="icon" className="size-7" onClick={() => openSubscription(user)} aria-label={`View ${user.name} subscription`} title={`View ${user.name} subscription`}><Eye className="size-3.5" /></Button>
@@ -186,16 +211,56 @@ export default function AdminDashboard({ users = [] }: Props) {
                         </div>
                     </div>
                 </div>
-                <div className="border-t border-border bg-surface px-4 py-3"><p className="mx-auto max-w-6xl text-xs text-muted-foreground">Showing {visibleUsers.length} of {users.length} institution{users.length === 1 ? '' : 's'}</p></div>
+                <div className="border-t border-border bg-surface px-4 py-3"><p className="mx-auto max-w-6xl text-xs text-muted-foreground">Showing {visibleUsers.length} of {institutionUsers.length} institution{institutionUsers.length === 1 ? '' : 's'}</p></div>
             </div>
 
             <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
                 <DialogContent>
-                    <DialogHeader><DialogTitle>Add institution</DialogTitle><DialogDescription>Manage the institution login separately from tenant roles.</DialogDescription></DialogHeader>
+                    <DialogHeader><DialogTitle>Add institution</DialogTitle><DialogDescription>Create a local preview account and copy a workspace setup. No backend changes are made.</DialogDescription></DialogHeader>
                     <form onSubmit={submit} className="space-y-4">
                         <div className="space-y-2"><Label htmlFor="admin-name">Name</Label><Input id="admin-name" value={form.data.name} onChange={(event) => form.setData('name', event.target.value)} required /></div>
-                        <div className="space-y-2"><Label htmlFor="admin-email">Email</Label><Input id="admin-email" type="email" value={form.data.email} onChange={(event) => form.setData('email', event.target.value)} required /></div>
-                        <div className="space-y-2"><Label htmlFor="admin-password">Password</Label><Input id="admin-password" type="password" value={form.data.password} onChange={(event) => form.setData('password', event.target.value)} minLength={8} required /></div>
+                        <div className="space-y-2"><Label htmlFor="admin-email">Email</Label><Input id="admin-email" type="text" inputMode="email" value={form.data.email} onChange={(event) => form.setData('email', event.target.value)} required /></div>
+                        <div className="space-y-2"><Label htmlFor="admin-password">Password</Label><Input id="admin-password" type="password" value={form.data.password} onChange={(event) => form.setData('password', event.target.value)} required /></div>
+                        <div className="space-y-2">
+                            <Label htmlFor="admin-template">Copy setup from</Label>
+                            <select
+                                id="admin-template"
+                                value={form.data.template_user_id}
+                                onChange={(event) => {
+                                    const templateUserId = event.target.value;
+                                    const template = institutionUsers.find((user) => String(user.id) === templateUserId);
+
+                                    form.setData('template_user_id', templateUserId);
+                                    if (form.data.copy_settings && template?.theme_color) {
+                                        form.setData('theme_color', template.theme_color);
+                                    }
+                                }}
+                                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+                            >
+                                <option value="default">Standard workspace</option>
+                                {institutionUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+                            </select>
+                        </div>
+                        <fieldset className="space-y-2">
+                            <legend className="text-sm font-medium">Copy workspace setup</legend>
+                            <div className="grid gap-2 sm:grid-cols-3">
+                                {([
+                                    ['copy_dashboard', 'Dashboard'],
+                                    ['copy_layout', 'Layout'],
+                                    ['copy_settings', 'Settings'],
+                                ] as const).map(([field, label]) => (
+                                    <label key={field} className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm">
+                                        <input
+                                            type="checkbox"
+                                            checked={form.data[field]}
+                                            onChange={(event) => form.setData(field, event.target.checked)}
+                                            className="size-4 accent-primary"
+                                        />
+                                        {label}
+                                    </label>
+                                ))}
+                            </div>
+                        </fieldset>
                         <div className="space-y-2">
                             <Label>Theme color</Label>
                             <div className="grid grid-cols-7 gap-1.5">
@@ -210,7 +275,7 @@ export default function AdminDashboard({ users = [] }: Props) {
                                 ))}
                             </div>
                         </div>
-                        <DialogFooter><Button type="submit" disabled={form.processing}>{form.processing ? 'Saving...' : 'Create account'}</Button></DialogFooter>
+                        <DialogFooter><Button type="submit">Create preview account</Button></DialogFooter>
                     </form>
                 </DialogContent>
             </Dialog>

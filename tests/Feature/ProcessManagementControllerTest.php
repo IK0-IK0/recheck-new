@@ -17,6 +17,7 @@ use App\Models\Process;
 use App\Models\Role;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Validation\ValidationException;
 
 // ---------------------------------------------------------------------------
 // Helper — register controller routes inline for HTTP-based tests
@@ -167,6 +168,157 @@ test('storeAction and updateAction persist selected role access assignments, doc
     expect($action->fresh()->action_type)->toBe('check');
     expect($action->fresh()->roles()->pluck('roles.id')->all())->toBe([$newRole->id]);
     expect($action->fresh()->documents()->pluck('documents.id')->all())->toBe([$newDocument->id]);
+});
+
+test('review actions persist separate approve and deny destinations', function (): void {
+    $phase = Phase::factory()->create();
+    $approveAction = Action::factory()->for($phase)->create();
+    $denyAction = Action::factory()->for($phase)->create();
+    $controller = new ProcessManagementController;
+    $request = Request::create('/actions', 'POST', [
+        'name' => 'Decision review',
+        'action_type' => 'review',
+        'approve_action_id' => $approveAction->id,
+        'deny_action_id' => $denyAction->id,
+    ]);
+
+    $controller->storeAction($request, $phase);
+
+    $reviewAction = $phase->actions()->where('name', 'Decision review')->firstOrFail();
+
+    expect($reviewAction->approve_action_id)->toBe($approveAction->id)
+        ->and($reviewAction->deny_action_id)->toBe($denyAction->id);
+});
+
+test('review decisions cannot route to the same action', function (): void {
+    $phase = Phase::factory()->create();
+    $target = Action::factory()->for($phase)->create();
+    $reviewAction = Action::factory()->for($phase)->create(['action_type' => 'review']);
+    $controller = new ProcessManagementController;
+    $request = Request::create('/actions', 'PUT', [
+        'name' => $reviewAction->name,
+        'action_type' => 'review',
+        'approve_action_id' => $target->id,
+        'deny_action_id' => $target->id,
+    ]);
+
+    expect(fn () => $controller->updateAction($request, $reviewAction))
+        ->toThrow(ValidationException::class);
+});
+
+test('review decision routes must target another action in the same phase', function (): void {
+    $phase = Phase::factory()->create();
+    $otherPhase = Phase::factory()->create();
+    $crossPhaseAction = Action::factory()->for($otherPhase)->create();
+    $reviewAction = Action::factory()->for($phase)->create(['action_type' => 'review']);
+    $controller = new ProcessManagementController;
+    $request = Request::create('/actions', 'PUT', [
+        'name' => $reviewAction->name,
+        'action_type' => 'review',
+        'approve_action_id' => $crossPhaseAction->id,
+    ]);
+
+    expect(fn () => $controller->updateAction($request, $reviewAction))
+        ->toThrow(ValidationException::class);
+});
+
+test('changing a review action to submit clears its decision destinations', function (): void {
+    $phase = Phase::factory()->create();
+    $approveAction = Action::factory()->for($phase)->create();
+    $denyAction = Action::factory()->for($phase)->create();
+    $reviewAction = Action::factory()->for($phase)->create([
+        'action_type' => 'review',
+        'approve_action_id' => $approveAction->id,
+        'deny_action_id' => $denyAction->id,
+    ]);
+    $controller = new ProcessManagementController;
+    $request = Request::create('/actions', 'PUT', [
+        'name' => $reviewAction->name,
+        'action_type' => 'submit',
+    ]);
+
+    $controller->updateAction($request, $reviewAction);
+
+    expect($reviewAction->fresh()->approve_action_id)->toBeNull()
+        ->and($reviewAction->fresh()->deny_action_id)->toBeNull();
+});
+
+test('submit and approve deny actions accept empty custom decision branches', function (): void {
+    $phase = Phase::factory()->create();
+    $controller = new ProcessManagementController;
+
+    foreach ([
+        ['name' => 'Submit action', 'action_type' => 'submit'],
+        ['name' => 'Review action', 'action_type' => 'review'],
+    ] as $values) {
+        $request = Request::create('/actions', 'POST', [
+            ...$values,
+            'decision_mode' => 'approve_deny',
+            'custom_decision_branches' => [],
+        ]);
+
+        $controller->storeAction($request, $phase);
+    }
+
+    $actions = $phase->actions()->orderBy('id')->get();
+
+    foreach ($actions as $action) {
+        $request = Request::create('/actions', 'PUT', [
+            'name' => $action->name,
+            'action_type' => $action->action_type,
+            'decision_mode' => 'approve_deny',
+            'custom_decision_branches' => [],
+        ]);
+
+        $controller->updateAction($request, $action);
+    }
+
+    expect($phase->actions()->count())->toBe(2);
+});
+
+test('action assignment groups persist roles and required documents', function (): void {
+    $phase = Phase::factory()->create();
+    $role = Role::factory()->create();
+    $document = Document::factory()->create();
+    $controller = new ProcessManagementController;
+    $reviewerGroups = [[
+        'id' => 'assignment-one',
+        'name' => 'Assignment 1',
+        'role_ids' => [$role->id],
+        'document_ids' => [$document->id],
+    ]];
+    $request = Request::create('/actions', 'POST', [
+        'name' => 'Submit files',
+        'action_type' => 'submit',
+        'reviewer_groups' => $reviewerGroups,
+    ]);
+
+    $controller->storeAction($request, $phase);
+
+    $action = $phase->actions()->firstOrFail();
+    expect($action->reviewer_groups)->toBe($reviewerGroups)
+        ->and($action->roles()->pluck('roles.id')->all())->toBe([$role->id])
+        ->and($action->documents()->pluck('documents.id')->all())->toBe([$document->id]);
+
+    $updatedRole = Role::factory()->create();
+    $updatedDocument = Document::factory()->create();
+    $updatedGroups = [[
+        'id' => 'assignment-two',
+        'name' => 'Assignment 2',
+        'role_ids' => [$updatedRole->id],
+        'document_ids' => [$updatedDocument->id],
+    ]];
+    $updateRequest = Request::create('/actions', 'PUT', [
+        'name' => 'Submit files',
+        'action_type' => 'submit',
+        'reviewer_groups' => $updatedGroups,
+    ]);
+
+    $controller->updateAction($updateRequest, $action);
+
+    expect($action->fresh()->reviewer_groups)->toBe($updatedGroups)
+        ->and($action->fresh()->roles()->pluck('roles.id')->all())->toBe([$updatedRole->id])
+        ->and($action->fresh()->documents()->pluck('documents.id')->all())->toBe([$updatedDocument->id]);
 });
 
 // ---------------------------------------------------------------------------

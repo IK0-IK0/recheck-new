@@ -12,67 +12,91 @@
  * Validates: Requirements 8.5
  */
 
-use App\Http\Requests\Settings\ProfileUpdateRequest;
-use App\Models\TenantUser;
+use App\Models\SuperadminTenantUser;
+use App\Models\User;
+use Illuminate\Support\Facades\Schema;
 
-// ---------------------------------------------------------------------------
-// Property 5 — All 13 valid theme colors are accepted and persisted correctly
-// ---------------------------------------------------------------------------
-it('stores each of the 13 valid theme colors exactly as submitted (Property 5)', function (): void {
-    $validColors = ProfileUpdateRequest::THEME_COLORS;
+it('uses the linked institution theme and ignores theme changes in profile updates', function (): void {
+    expect(Schema::connection('sqlite')->hasColumn('tenant_users', 'theme_color'))->toBeFalse();
 
-    expect($validColors)->toHaveCount(13);
+    $institution = User::factory()->create([
+        'role' => 'institution',
+        'theme_color' => 'teal',
+    ]);
+    $tenantUser = SuperadminTenantUser::create([
+        'name' => 'Tenant User',
+        'email' => 'tenant@example.com',
+        'password' => 'password',
+    ]);
+    $tenantUser->institution()->associate($institution);
+    $tenantUser->save();
 
-    foreach ($validColors as $color) {
-        $user = TenantUser::factory()->create(['theme_color' => 'zinc']);
+    $this->actingAs($tenantUser)
+        ->get(route('profile.edit'))
+        ->assertOk()
+        ->assertInertia(fn ($page) => $page->where('auth.user.theme_color', 'teal'));
 
-        $response = $this
-            ->actingAs($user)
-            ->patch(route('profile.update'), [
-                'name' => $user->name,
-                'email' => $user->email,
-                'theme_color' => $color,
-            ]);
-
-        $response->assertSessionHasNoErrors();
-        $response->assertRedirect(route('profile.edit'));
-
-        expect($user->fresh()->theme_color)
-            ->toBe($color, "theme_color '{$color}' should be stored exactly as submitted");
-    }
-})->group('property-5-theme-color');
-
-// ---------------------------------------------------------------------------
-// Property 5 edge case — An invalid theme color returns HTTP 422
-// ---------------------------------------------------------------------------
-it('rejects an invalid theme_color value with a 422 validation error (Property 5)', function (): void {
-    $user = TenantUser::factory()->create();
-
-    $response = $this
-        ->actingAs($user)
+    $this->actingAs($tenantUser)
         ->patch(route('profile.update'), [
-            'name' => $user->name,
-            'email' => $user->email,
-            'theme_color' => 'invalidcolor',
-        ]);
+            'name' => $tenantUser->name,
+            'email' => $tenantUser->email,
+            'theme_color' => 'rose',
+        ])
+        ->assertSessionHasNoErrors()
+        ->assertRedirect(route('profile.edit'));
 
-    $response->assertSessionHasErrors('theme_color');
-})->group('property-5-theme-color');
+    expect($tenantUser->fresh()->theme_color)->toBe('teal');
+    expect($institution->fresh()->theme_color)->toBe('teal');
+});
 
-// ---------------------------------------------------------------------------
-// Property 5 additional edge cases — Other clearly invalid values also rejected
-// ---------------------------------------------------------------------------
-it('rejects other invalid theme_color values including empty string and numeric (Property 5)', function (string $invalidColor): void {
-    $user = TenantUser::factory()->create();
+it('displays the linked institution theme and ignores changes from institution settings', function (): void {
+    $institution = User::factory()->create([
+        'role' => 'institution',
+        'theme_color' => 'teal',
+    ]);
+    $tenantUser = SuperadminTenantUser::create([
+        'name' => 'Tenant User',
+        'email' => 'tenant-settings@example.com',
+        'password' => 'password',
+        'institution_id' => $institution->id,
+    ]);
 
-    $response = $this
-        ->actingAs($user)
-        ->patch(route('profile.update'), [
-            'name' => $user->name,
-            'email' => $user->email,
-            'theme_color' => $invalidColor,
-        ]);
+    $this->actingAs($tenantUser)
+        ->get(route('institution.edit'))
+        ->assertOk()
+        ->assertInertia(fn ($page) => $page->where('themeColor', 'teal'));
 
-    $response->assertSessionHasErrors('theme_color');
-})->with(['blue', 'purple', 'white', 'black', '123', 'ZINC'])
-    ->group('property-5-theme-color');
+    $this->actingAs($tenantUser)
+        ->patch(route('institution.update'), [
+            'institution_name' => 'Updated Institution',
+            'institution_email' => 'updated@example.com',
+            'theme_color' => 'rose',
+        ])
+        ->assertSessionHasNoErrors()
+        ->assertRedirect();
+
+    expect($institution->fresh()->name)->toBe('Updated Institution');
+    expect($institution->fresh()->theme_color)->toBe('teal');
+});
+
+it('allows the institution account to change its theme color', function (): void {
+    $institution = User::factory()->create([
+        'role' => 'institution',
+        'theme_color' => 'teal',
+    ]);
+
+    $this->actingAs($institution)
+        ->get(route('institution.edit'))
+        ->assertOk()
+        ->assertInertia(fn ($page) => $page->where('canEditTheme', true));
+
+    $this->actingAs($institution)
+        ->patch(route('institution.update'), [
+            'institution_name' => $institution->name,
+            'institution_email' => $institution->email,
+            'theme_color' => 'rose',
+        ])
+        ->assertSessionHasNoErrors();
+
+    expect($institution->fresh()->theme_color)->toBe('rose');
+});

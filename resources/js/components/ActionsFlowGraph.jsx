@@ -1,74 +1,18 @@
-import { useCallback, useMemo, useEffect, useRef, useState } from 'react';
+import { useMemo, useEffect, useRef, useState } from 'react';
 import {
     ReactFlow,
     Background,
     Controls,
     MiniMap,
+    BaseEdge,
     useNodesState,
     useEdgesState,
     MarkerType,
     Handle,
     Position,
-    getBezierPath,
-    BaseEdge,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { Edit3, Trash2, FileCheck, FileText, Clock, Maximize2, Minimize2, Plus } from 'lucide-react';
-
-// Custom edge for deny arrows with deeper curve
-function DenyEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style = {}, markerEnd, label, labelBgStyle, labelStyle }) {
-    // Create a deeper curve by adjusting control points
-    const curveDepth = 100; // How far down the curve goes
-    
-    // Calculate control points for a deeper curve
-    const midY = Math.max(sourceY, targetY) + curveDepth;
-    
-    const [edgePath, labelX, labelY] = getBezierPath({
-        sourceX,
-        sourceY,
-        sourcePosition,
-        targetX,
-        targetY,
-        targetPosition,
-        curvature: 0.5,
-    });
-    
-    // Create custom path with deeper curve
-    const customPath = `M ${sourceX},${sourceY} C ${sourceX},${midY} ${targetX},${midY} ${targetX},${targetY}`;
-    
-    return (
-        <>
-            <BaseEdge id={id} path={customPath} markerEnd={markerEnd} style={style} />
-            {label && (
-                <g>
-                    <rect
-                        x={(sourceX + targetX) / 2 - 20}
-                        y={midY - 10}
-                        width={40}
-                        height={20}
-                        rx={4}
-                        fill={labelBgStyle?.fill || '#ef4444'}
-                        fillOpacity={labelBgStyle?.fillOpacity || 0.9}
-                    />
-                    <text
-                        x={(sourceX + targetX) / 2}
-                        y={midY + 3}
-                        style={{
-                            ...labelStyle,
-                            fontSize: labelStyle?.fontSize || 11,
-                            fontWeight: labelStyle?.fontWeight || 600,
-                            fill: labelStyle?.fill || '#fff',
-                        }}
-                        textAnchor="middle"
-                        dominantBaseline="middle"
-                    >
-                        {label}
-                    </text>
-                </g>
-            )}
-        </>
-    );
-}
 
 const actionTypeIcons = {
     review: FileCheck,
@@ -91,7 +35,7 @@ function ActionNode({ data, selected }) {
         <div 
             className={`rounded-xl border-2 bg-surface shadow-lg min-w-[280px] ${
                 selected 
-                    ? 'border-primary shadow-2xl scale-105 cursor-grabbing' 
+                    ? 'border-primary shadow-2xl scale-105 cursor-grabbing'
                     : 'border-border hover:shadow-xl hover:border-primary/50 cursor-grab'
             }`}
             style={{
@@ -99,32 +43,26 @@ function ActionNode({ data, selected }) {
             }}
         >
             {/* Left handle for incoming connections */}
-            <Handle 
-                type="target" 
+            <Handle
+                type="target"
                 position={Position.Left} 
+                id="target-left"
                 className="!bg-primary !border-2 !border-primary-foreground !w-3 !h-3"
             />
-            
-            {/* Bottom handle for receiving deny arrows from later review nodes - only for non-review nodes */}
-            {!isReview && (
-                <Handle 
-                    type="target" 
+            {data.incomingDecisionPaths?.some((path) => path.isBackward) ? (
+                <Handle
+                    type="target"
                     position={Position.Bottom}
-                    id="deny-target"
-                    className="!bg-red-500 !border-2 !border-white !w-3 !h-3"
-                    style={{ left: '50%' }}
+                    id="target-bottom"
+                    className="!bg-primary !border-2 !border-primary-foreground !w-3 !h-3"
                 />
-            )}
+            ) : null}
             
-            <div className={`flex items-center gap-3 rounded-t-lg ${colorClass} px-4 py-3 text-white`}>
-                <Icon className="size-5 shrink-0" />
-                <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-sm truncate">{data.name}</h3>
-                </div>
-                {/* Drag indicator */}
-                <svg className="size-4 shrink-0 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8h16M4 16h16" />
-                </svg>
+                <div className={`flex items-center gap-3 rounded-t-lg ${colorClass} px-4 py-3 text-white`}>
+                    <Icon className="size-5 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold text-sm truncate">{data.name}</h3>
+                    </div>
             </div>
 
             <div className="p-4 space-y-3">
@@ -167,6 +105,48 @@ function ActionNode({ data, selected }) {
                     </div>
                 )}
 
+                {isReview && data.decision_branches?.length ? (
+                    <div className="grid gap-1.5 border-t border-border pt-3">
+                        <p className="text-xs font-semibold text-foreground">Decision paths</p>
+                        {data.decision_branches.map((branch) => (
+                            <div key={branch.id} className="flex min-w-0 items-center gap-2 text-[11px]">
+                                <span
+                                    className="size-2 shrink-0 rounded-full"
+                                    style={{ backgroundColor: branch.color }}
+                                />
+                                <span className="truncate font-medium text-foreground">{branch.label}</span>
+                                <span className="truncate text-muted-foreground">{branch.destination_label}</span>
+                            </div>
+                        ))}
+                        {data.decision_branches.some((branch) => branch.type === 'custom') ? (
+                            <span className="mt-1 w-fit rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                                Saved to configuration; not executed in proposals
+                            </span>
+                        ) : null}
+                    </div>
+                ) : null}
+
+                {data.incomingDecisionPaths?.length ? (
+                    <div className="flex flex-wrap gap-1.5 border-t border-border pt-3">
+                        {data.incomingDecisionPaths.map((path) => (
+                            <span
+                                key={`${path.label}-${path.color}`}
+                                className="inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-semibold"
+                                style={{
+                                    color: path.color,
+                                    backgroundColor: `${path.color}1a`,
+                                }}
+                            >
+                                <span
+                                    className="size-1.5 rounded-full"
+                                    style={{ backgroundColor: path.color }}
+                                />
+                                {path.label} path
+                            </span>
+                        ))}
+                    </div>
+                ) : null}
+
                 <div className="flex items-center gap-2 pt-2 border-t border-border">
                     <button
                         type="button"
@@ -187,22 +167,44 @@ function ActionNode({ data, selected }) {
                 </div>
             </div>
 
-            {/* Right handle for outgoing connections (approve) */}
-            <Handle 
-                type="source" 
-                position={Position.Right}
-                id="approve"
-                className="!bg-primary !border-2 !border-primary-foreground !w-3 !h-3"
-            />
-            
-            {/* Bottom handle for deny outgoing connections - only for review nodes */}
-            {isReview && (
-                <Handle 
-                    type="source" 
-                    position={Position.Bottom}
-                    id="deny"
-                    className="!bg-red-500 !border-2 !border-white !w-3 !h-3"
-                    style={{ left: '50%' }}
+            {isReview ? data.decision_branches?.map((branch, index) => {
+                const handleId = branch.type === 'approve'
+                    ? 'approve'
+                    : branch.type === 'deny'
+                        ? 'deny'
+                        : `outcome-${branch.id}`;
+                const topPosition = `${((index + 1) / (data.decision_branches.length + 1)) * 100}%`;
+                const backwardHandleIndex = data.backwardDecisionBranchHandles?.indexOf(handleId) ?? -1;
+                const isBackward = backwardHandleIndex >= 0;
+                const backwardHandleCount = data.backwardDecisionBranchHandles?.length ?? 0;
+
+                return (
+                    <Handle
+                        key={handleId}
+                        type="source"
+                        position={isBackward
+                            ? Position.Bottom
+                            : branch.type === 'deny' ? Position.Left : Position.Right}
+                        id={handleId}
+                        title={branch.label}
+                        className="!border-2 !border-white !w-3 !h-3"
+                        style={{
+                            ...(isBackward
+                                ? {
+                                      left: `${20 + ((backwardHandleIndex + 1) / (backwardHandleCount + 1)) * 25}%`,
+                                      bottom: '-6px',
+                                  }
+                                : { top: topPosition }),
+                            backgroundColor: branch.color,
+                            ...(!isBackward && branch.type === 'deny' ? { left: '-6px' } : {}),
+                        }}
+                    />
+                );
+            }) : (
+                <Handle
+                    type="source"
+                    position={Position.Right}
+                    className="!bg-primary !border-2 !border-primary-foreground !w-3 !h-3"
                 />
             )}
         </div>
@@ -274,22 +276,377 @@ function StartPhaseNode({ data }) {
     );
 }
 
+function EndNode() {
+    return (
+        <div className="relative flex flex-col items-center">
+            <Handle
+                type="target"
+                position={Position.Left}
+                className="!top-[66px] !h-3 !w-3 !border-2 !border-white !bg-red-600"
+                style={{ left: '-6px' }}
+            />
+            <div className="flex size-32 flex-col items-center justify-center rounded-full border-4 border-dashed border-red-600 bg-red-50 shadow-lg dark:bg-red-950/20">
+                <div className="mb-2 flex size-12 items-center justify-center rounded-full bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400">
+                    <svg className="size-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 6h12v12H6z" />
+                    </svg>
+                </div>
+                <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">End</p>
+                <h3 className="mt-0.5 px-2 text-center text-xs font-semibold text-foreground">Workflow complete</h3>
+            </div>
+            <div className="mt-2 rounded-full bg-red-100 px-3 py-1 dark:bg-red-900/30">
+                <p className="text-xs font-medium text-red-700 dark:text-red-400">End of process</p>
+            </div>
+        </div>
+    );
+}
+
 const nodeTypes = {
     actionNode: ActionNode,
     nextPhaseNode: NextPhaseNode,
     startPhaseNode: StartPhaseNode,
+    endNode: EndNode,
 };
+
+function BackwardDecisionEdge({ sourceX, sourceY, targetX, targetY, markerEnd, style, label, labelStyle, labelBgStyle }) {
+    const loopDepth = Math.max(180, Math.abs(targetX - sourceX) * 0.2);
+    const path = `M ${sourceX},${sourceY} C ${sourceX},${sourceY + loopDepth} ${targetX},${targetY + loopDepth} ${targetX},${targetY}`;
+
+    return (
+        <BaseEdge
+            path={path}
+            markerEnd={markerEnd}
+            style={style}
+            label={label}
+            labelX={(sourceX + targetX) / 2}
+            labelY={(sourceY + targetY) / 2 + loopDepth * 0.75}
+            labelStyle={labelStyle}
+            labelShowBg={Boolean(label)}
+            labelBgStyle={labelBgStyle}
+            labelBgPadding={[5, 3]}
+            labelBgBorderRadius={4}
+        />
+    );
+}
 
 const edgeTypes = {
-    deny: DenyEdge,
+    backwardDecision: BackwardDecisionEdge,
 };
 
-export default function ActionsFlowGraph({ actions = [], onEdit, onDelete, onReorder, onAddAction, nextPhase = null, currentPhaseName = null }) {
-    const [draggedNodeId, setDraggedNodeId] = useState(null);
-    const [previewIndex, setPreviewIndex] = useState(null);
-    const [isReordering, setIsReordering] = useState(false);
+function buildActionEdges(actions, currentPhaseName, nextPhase) {
+    const edges = [];
+    const actionTargets = new Map(actions.map((action) => [String(action.id), action]));
+    const actionIndexes = new Map(actions.map((action, index) => [String(action.id), index]));
+    const getEdgeType = (sourceAction, targetAction) => (
+        actionIndexes.get(String(targetAction.id)) < actionIndexes.get(String(sourceAction.id))
+            ? 'backwardDecision'
+            : 'default'
+    );
+    const getTargetHandle = (sourceAction, targetAction) => (
+        getEdgeType(sourceAction, targetAction) === 'backwardDecision'
+            ? 'target-bottom'
+            : 'target-left'
+    );
+
+    if (currentPhaseName && actions.length > 0) {
+        edges.push({
+            id: 'edge-start-to-first',
+            source: 'start-phase',
+            target: `action-${actions[0].id}`,
+            targetHandle: 'target-left',
+            type: 'default',
+            animated: true,
+            markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20 },
+            style: { strokeWidth: 2, stroke: '#16a34a' },
+        });
+    }
+
+    if (currentPhaseName && actions.length === 0) {
+        edges.push({
+            id: `edge-start-to-${nextPhase ? 'next-phase' : 'end'}`,
+            source: 'start-phase',
+            target: nextPhase ? 'next-phase' : 'end',
+            type: 'default',
+            animated: true,
+            markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20 },
+            style: { strokeWidth: 2, stroke: '#3b82f6', strokeDasharray: '5,5' },
+        });
+    }
+
+    actions.forEach((action, index) => {
+        const nextAction = actions[index + 1] ?? null;
+
+        if (action.action_type === 'review') {
+            const configuredApproveTarget = action.approve_action_id == null
+                ? null
+                : actionTargets.get(String(action.approve_action_id));
+            const approveTarget = configuredApproveTarget ?? nextAction;
+
+            if (approveTarget) {
+                edges.push({
+                    id: `edge-${action.id}-approve-${approveTarget.id}`,
+                    source: `action-${action.id}`,
+                    sourceHandle: 'approve',
+                    target: `action-${approveTarget.id}`,
+                    targetHandle: getTargetHandle(action, approveTarget),
+                    type: getEdgeType(action, approveTarget),
+                    animated: true,
+                    label: 'Approve',
+                    labelBgStyle: { fill: '#22c55e', fillOpacity: 0.9 },
+                    labelStyle: { fill: '#fff', fontSize: 11, fontWeight: 600 },
+                    markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: '#22c55e' },
+                    style: { strokeWidth: 2, stroke: '#22c55e' },
+                });
+            } else if (!nextPhase && action.approve_action_id == null) {
+                edges.push({
+                    id: `edge-${action.id}-approve-end`,
+                    source: `action-${action.id}`,
+                    sourceHandle: 'approve',
+                    target: 'end',
+                    type: 'default',
+                    animated: true,
+                    label: 'Approve',
+                    labelBgStyle: { fill: '#22c55e', fillOpacity: 0.9 },
+                    labelStyle: { fill: '#fff', fontSize: 11, fontWeight: 600 },
+                    markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: '#22c55e' },
+                    style: { strokeWidth: 2, stroke: '#22c55e' },
+                });
+            }
+
+            const denyTarget = action.deny_action_id == null
+                ? null
+                : actionTargets.get(String(action.deny_action_id));
+
+            if (denyTarget || (!nextPhase && action.deny_action_id == null)) {
+                edges.push({
+                    id: `edge-${action.id}-deny-${denyTarget?.id ?? 'end'}`,
+                    source: `action-${action.id}`,
+                    sourceHandle: 'deny',
+                    target: denyTarget ? `action-${denyTarget.id}` : 'end',
+                    ...(denyTarget ? { targetHandle: getTargetHandle(action, denyTarget) } : {}),
+                    type: denyTarget ? getEdgeType(action, denyTarget) : 'default',
+                    animated: true,
+                    label: 'Deny',
+                    labelBgStyle: { fill: '#ef4444', fillOpacity: 0.9 },
+                    labelStyle: { fill: '#fff', fontSize: 11, fontWeight: 600 },
+                    markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: '#ef4444' },
+                    style: { strokeWidth: 2, stroke: '#ef4444' },
+                });
+            }
+
+            (action.decision_branches ?? [])
+                .filter((branch) => branch.type === 'custom')
+                .forEach((branch) => {
+                    const actionTargetId = branch.destination.startsWith('action:')
+                        ? branch.destination.slice('action:'.length)
+                        : null;
+                    const actionTarget = actionTargetId
+                        ? actionTargets.get(String(actionTargetId))
+                        : null;
+                    const destination = actionTarget
+                        ?? (branch.destination === 'next' ? nextAction ?? nextPhase : null)
+                        ?? ((branch.destination === 'end' && !nextPhase)
+                            || (branch.destination === 'next' && !nextAction && !nextPhase)
+                            ? { id: 'end' }
+                            : null);
+
+                    if (!destination) {
+                        return;
+                    }
+
+                    const isEnd = destination.id === 'end';
+                    const target = isEnd
+                        ? 'end'
+                        : destination === nextPhase
+                            ? 'next-phase'
+                            : `action-${destination.id}`;
+
+                    edges.push({
+                        id: `edge-${action.id}-outcome-${branch.id}-${target}`,
+                        source: `action-${action.id}`,
+                        sourceHandle: `outcome-${branch.id}`,
+                        target,
+                        ...(!isEnd && destination !== nextPhase
+                            ? { targetHandle: getTargetHandle(action, destination) }
+                            : {}),
+                        type: !isEnd && destination !== nextPhase
+                            ? getEdgeType(action, destination)
+                            : 'default',
+                        animated: true,
+                        label: branch.label,
+                        labelBgStyle: { fill: branch.color, fillOpacity: 0.9 },
+                        labelStyle: { fill: '#fff', fontSize: 11, fontWeight: 600 },
+                        markerEnd: {
+                            type: MarkerType.ArrowClosed,
+                            width: 20,
+                            height: 20,
+                            color: branch.color,
+                        },
+                        style: { strokeWidth: 2, stroke: branch.color },
+                    });
+                });
+        } else if (nextAction) {
+            edges.push({
+                id: `edge-${action.id}-${nextAction.id}`,
+                source: `action-${action.id}`,
+                target: `action-${nextAction.id}`,
+                targetHandle: 'target-left',
+                type: 'default',
+                animated: true,
+                markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: '#3b82f6' },
+                style: { strokeWidth: 2, stroke: '#3b82f6' },
+            });
+        }
+    });
+
+    const lastAction = actions.at(-1);
+
+    if (nextPhase && lastAction && (
+        lastAction.action_type !== 'review'
+        || lastAction.approve_action_id == null
+        || !actionTargets.has(String(lastAction.approve_action_id))
+    )) {
+        edges.push({
+            id: 'edge-last-to-next-phase',
+            source: `action-${lastAction.id}`,
+            sourceHandle: lastAction.action_type === 'review' ? 'approve' : null,
+            target: 'next-phase',
+            type: 'default',
+            animated: true,
+            label: lastAction.action_type === 'review' ? 'Approve' : undefined,
+            labelBgStyle: { fill: '#22c55e', fillOpacity: 0.9 },
+            labelStyle: { fill: '#fff', fontSize: 11, fontWeight: 600 },
+            markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20 },
+            style: { strokeWidth: 2, stroke: '#3b82f6', strokeDasharray: '5,5' },
+        });
+    }
+
+    if (!nextPhase && lastAction && lastAction.action_type !== 'review') {
+        edges.push({
+            id: `edge-${lastAction.id}-to-end`,
+            source: `action-${lastAction.id}`,
+            target: 'end',
+            type: 'default',
+            animated: true,
+            markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20 },
+            style: { strokeWidth: 2, stroke: '#3b82f6', strokeDasharray: '5,5' },
+        });
+    }
+
+    return edges;
+}
+
+function getDecisionDestinationPaths(actions) {
+    const destinationPaths = new Map();
+    const actionIndexes = new Map(actions.map((action, index) => [String(action.id), index]));
+    const defaultColors = {
+        approve: '#16a34a',
+        deny: '#dc2626',
+        custom: '#8b5cf6',
+    };
+
+    actions.forEach((action) => {
+        if (action.action_type !== 'review') {
+            return;
+        }
+
+        const branches = action.decision_branches?.length
+            ? action.decision_branches
+            : [
+                  {
+                      type: 'approve',
+                      label: 'Approve',
+                      destination: action.approve_action_id == null
+                          ? 'next'
+                          : `action:${action.approve_action_id}`,
+                  },
+                  {
+                      type: 'deny',
+                      label: 'Deny',
+                      destination: action.deny_action_id == null
+                          ? 'end'
+                          : `action:${action.deny_action_id}`,
+                  },
+              ];
+
+        branches.forEach((branch) => {
+            if (!branch.destination?.startsWith('action:')) {
+                return;
+            }
+
+            const destinationId = branch.destination.slice('action:'.length);
+            const existingPaths = destinationPaths.get(destinationId) ?? [];
+
+            destinationPaths.set(destinationId, [
+                ...existingPaths,
+                {
+                    label: branch.label,
+                    color: branch.color ?? defaultColors[branch.type] ?? defaultColors.custom,
+                    isBackward: actionIndexes.has(destinationId)
+                        && actionIndexes.get(destinationId) < actionIndexes.get(String(action.id)),
+                },
+            ]);
+        });
+    });
+
+    return destinationPaths;
+}
+
+function getBackwardDecisionBranchHandles(actions) {
+    const actionIndexes = new Map(actions.map((action, index) => [String(action.id), index]));
+
+    return new Map(actions.map((action, actionIndex) => {
+        const branches = action.decision_branches?.length
+            ? action.decision_branches
+            : [
+                  {
+                      id: 'approve',
+                      type: 'approve',
+                      destination: action.approve_action_id == null
+                          ? 'next'
+                          : `action:${action.approve_action_id}`,
+                  },
+                  {
+                      id: 'deny',
+                      type: 'deny',
+                      destination: action.deny_action_id == null
+                          ? 'end'
+                          : `action:${action.deny_action_id}`,
+                  },
+              ];
+        const handles = branches
+            .filter((branch) => {
+                const destination = branch.type === 'approve' && action.approve_action_id != null
+                    ? `action:${action.approve_action_id}`
+                    : branch.type === 'deny' && action.deny_action_id != null
+                        ? `action:${action.deny_action_id}`
+                        : branch.destination;
+                const targetId = destination?.startsWith('action:')
+                    ? destination.slice('action:'.length)
+                    : null;
+
+                return targetId != null
+                    && actionIndexes.has(String(targetId))
+                    && actionIndexes.get(String(targetId)) < actionIndex;
+            });
+
+        return [
+            String(action.id),
+            handles.map((branch) => (
+                branch.type === 'approve'
+                    ? 'approve'
+                    : branch.type === 'deny'
+                        ? 'deny'
+                        : `outcome-${branch.id}`
+            )),
+        ];
+    }));
+}
+
+export default function ActionsFlowGraph({ actions = [], onEdit, onDelete, onAddAction, onReorderActions, nextPhase = null, currentPhaseName = null }) {
     const [isFullscreen, setIsFullscreen] = useState(false);
     const graphRef = useRef(null);
+    const draggedActionOrder = useRef(actions.map((action) => String(action.id)));
 
     useEffect(() => {
         const handleFullscreenChange = () => {
@@ -316,21 +673,16 @@ export default function ActionsFlowGraph({ actions = [], onEdit, onDelete, onReo
 
     // Convert actions to nodes and edges (horizontal layout)
     const { nodes: initialNodes, edges: initialEdges } = useMemo(() => {
-        if (!actions || actions.length === 0) {
-            return { nodes: [], edges: [] };
-        }
-
         const nodes = [];
+        const destinationPaths = getDecisionDestinationPaths(actions);
+        const backwardDecisionBranches = getBackwardDecisionBranchHandles(actions);
         
         // Add start node (not draggable)
         if (currentPhaseName) {
             nodes.push({
                 id: 'start-phase',
                 type: 'startPhaseNode',
-                position: {
-                    x: -300, // Position before first action - closer spacing
-                    y: 50,
-                },
+                position: { x: -300, y: 50 },
                 data: {
                     name: currentPhaseName,
                 },
@@ -343,12 +695,11 @@ export default function ActionsFlowGraph({ actions = [], onEdit, onDelete, onReo
             nodes.push({
                 id: `action-${action.id}`,
                 type: 'actionNode',
-                position: {
-                    x: index * 450, // Horizontal spacing - increased from 350 to 450
-                    y: 50,
-                },
+                position: { x: index * 450, y: 50 },
                 data: {
                     ...action,
+                    incomingDecisionPaths: destinationPaths.get(String(action.id)) ?? [],
+                    backwardDecisionBranchHandles: backwardDecisionBranches.get(String(action.id)) ?? [],
                     onEdit,
                     onDelete,
                 },
@@ -361,10 +712,7 @@ export default function ActionsFlowGraph({ actions = [], onEdit, onDelete, onReo
             nodes.push({
                 id: 'next-phase',
                 type: 'nextPhaseNode',
-                position: {
-                    x: actions.length * 450, // Match action spacing
-                    y: 50, // Same as action cards for alignment
-                },
+                position: { x: actions.length * 450, y: 50 },
                 data: {
                     name: nextPhase.name,
                     actionCount: nextPhase.actions?.length ?? 0,
@@ -373,104 +721,17 @@ export default function ActionsFlowGraph({ actions = [], onEdit, onDelete, onReo
             });
         }
 
-        const edges = [];
-        
-        // Connect start node to first action
-        if (currentPhaseName && actions.length > 0) {
-            edges.push({
-                id: 'edge-start-to-first',
-                source: 'start-phase',
-                target: `action-${actions[0].id}`,
-                type: 'default',
-                animated: true,
-                markerEnd: {
-                    type: MarkerType.ArrowClosed,
-                    width: 20,
-                    height: 20,
-                },
-                style: {
-                    strokeWidth: 2,
-                    stroke: '#16a34a', // green color for start
-                },
+        if (currentPhaseName && !nextPhase) {
+            nodes.push({
+                id: 'end',
+                type: 'endNode',
+                position: { x: actions.length * 450, y: 50 },
+                data: {},
+                draggable: false,
             });
-        }
-        
-        // Connect actions to each other
-        for (let i = 0; i < actions.length - 1; i++) {
-            const currentAction = actions[i];
-            const nextAction = actions[i + 1];
-            
-            // Normal forward edge (approve for review, normal for others)
-            edges.push({
-                id: `edge-${currentAction.id}-${nextAction.id}`,
-                source: `action-${currentAction.id}`,
-                sourceHandle: currentAction.action_type === 'review' ? 'approve' : null,
-                target: `action-${nextAction.id}`,
-                type: 'default',
-                animated: true,
-                label: currentAction.action_type === 'review' ? 'Approve' : undefined,
-                labelBgStyle: { fill: '#22c55e', fillOpacity: 0.9 },
-                labelStyle: { fill: '#fff', fontSize: 11, fontWeight: 600 },
-                markerEnd: {
-                    type: MarkerType.ArrowClosed,
-                    width: 20,
-                    height: 20,
-                    color: currentAction.action_type === 'review' ? '#22c55e' : '#3b82f6',
-                },
-                style: {
-                    strokeWidth: 2,
-                    stroke: currentAction.action_type === 'review' ? '#22c55e' : '#3b82f6',
-                },
-            });
-            
-            // Add deny (backward) arrow for review actions - goes from bottom to bottom of previous
-            if (currentAction.action_type === 'review' && i > 0) {
-                const targetIndex = Math.max(0, i - 1);
-                edges.push({
-                    id: `edge-${currentAction.id}-deny`,
-                    source: `action-${currentAction.id}`,
-                    sourceHandle: 'deny',
-                    target: `action-${actions[targetIndex].id}`,
-                    targetHandle: 'deny-target',
-                    type: 'deny', // Use custom deny edge type
-                    animated: true,
-                    label: 'Deny',
-                    labelBgStyle: { fill: '#ef4444', fillOpacity: 0.9 },
-                    labelStyle: { fill: '#fff', fontSize: 11, fontWeight: 600 },
-                    markerEnd: {
-                        type: MarkerType.ArrowClosed,
-                        width: 20,
-                        height: 20,
-                        color: '#ef4444',
-                    },
-                    style: {
-                        strokeWidth: 2,
-                        stroke: '#ef4444',
-                    },
-                });
-            }
         }
 
-        // Connect last action to next phase
-        if (nextPhase && actions.length > 0) {
-            edges.push({
-                id: 'edge-last-to-next-phase',
-                source: `action-${actions[actions.length - 1].id}`,
-                target: 'next-phase',
-                type: 'default',
-                animated: true,
-                markerEnd: {
-                    type: MarkerType.ArrowClosed,
-                    width: 20,
-                    height: 20,
-                },
-                style: {
-                    strokeWidth: 2,
-                    stroke: '#3b82f6',
-                    strokeDasharray: '5,5',
-                },
-            });
-        }
+        const edges = buildActionEdges(actions, currentPhaseName, nextPhase);
 
         return { nodes, edges };
     }, [actions, onEdit, onDelete, nextPhase, currentPhaseName]);
@@ -478,252 +739,131 @@ export default function ActionsFlowGraph({ actions = [], onEdit, onDelete, onReo
     const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
     const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
-    // Update nodes when actions change (after reorder) - but only if not currently previewing or reordering
+    // Reapply saved positions when actions or phase data changes.
     useEffect(() => {
-        if (isReordering || previewIndex !== null) {
-            // Don't reset during reorder operation or while showing preview
-            return;
-        }
+        draggedActionOrder.current = actions.map((action) => String(action.id));
         setNodes(initialNodes);
         setEdges(initialEdges);
-    }, [actions, nextPhase, currentPhaseName, setNodes, setEdges, initialNodes, initialEdges, isReordering, previewIndex]);
+    }, [setNodes, setEdges, initialNodes, initialEdges]);
 
-    const onNodeDragStart = useCallback(
-        (event, node) => {
-            if (node.id.startsWith('action-')) {
-                setDraggedNodeId(node.id);
+    const onNodeDrag = (_, draggedNode) => {
+        if (!draggedNode.id.startsWith('action-')) {
+            return;
+        }
+
+        const actionId = draggedNode.id.slice('action-'.length);
+        const currentIndex = draggedActionOrder.current.indexOf(actionId);
+        const draggedX = Math.max(
+            0,
+            Math.min(
+                (draggedActionOrder.current.length - 1) * 450,
+                draggedNode.position.x,
+            ),
+        );
+        const nextIndex = Math.max(
+            0,
+            Math.min(
+                draggedActionOrder.current.length - 1,
+                Math.round(draggedX / 450),
+            ),
+        );
+        const nextOrder = [...draggedActionOrder.current];
+
+        if (currentIndex !== -1 && currentIndex !== nextIndex) {
+            nextOrder.splice(currentIndex, 1);
+            nextOrder.splice(nextIndex, 0, actionId);
+            draggedActionOrder.current = nextOrder;
+        }
+
+        const actionById = new Map(actions.map((action) => [String(action.id), action]));
+        const orderedActions = nextOrder.map((id) => actionById.get(id)).filter(Boolean);
+        const destinationPaths = getDecisionDestinationPaths(orderedActions);
+        const backwardDecisionBranches = getBackwardDecisionBranchHandles(orderedActions);
+
+        setEdges(buildActionEdges(orderedActions, currentPhaseName, nextPhase));
+        setNodes((currentNodes) => currentNodes.map((currentNode) => {
+            if (!currentNode.id.startsWith('action-')) {
+                return currentNode;
             }
-        },
-        []
-    );
 
-    const onNodeDrag = useCallback(
-        (event, node) => {
-            // Only show preview for action nodes
+            const currentActionId = currentNode.id.slice('action-'.length);
+            const orderedIndex = nextOrder.indexOf(currentActionId);
+            const isDraggedNode = currentNode.id === draggedNode.id;
+
+            return {
+                ...currentNode,
+                data: {
+                    ...currentNode.data,
+                    incomingDecisionPaths: destinationPaths.get(currentActionId) ?? [],
+                    backwardDecisionBranchHandles: backwardDecisionBranches.get(currentActionId) ?? [],
+                },
+                position: {
+                    x: isDraggedNode ? draggedX : orderedIndex * 450,
+                    y: 50,
+                },
+            };
+        }));
+    };
+
+    const onNodeDragStop = async (_, draggedNode) => {
+        if (!draggedNode.id.startsWith('action-') || !onReorderActions) {
+            return;
+        }
+
+        const orderedActionIds = draggedActionOrder.current;
+        const currentActionIds = actions.map((action) => String(action.id));
+
+        if (orderedActionIds.every((actionId, index) => actionId === currentActionIds[index])) {
+            setNodes((currentNodes) => currentNodes.map((node) => {
+                if (!node.id.startsWith('action-')) {
+                    return node;
+                }
+
+                const originalIndex = currentActionIds.indexOf(node.id.slice('action-'.length));
+
+                return {
+                    ...node,
+                    position: { x: originalIndex * 450, y: 50 },
+                };
+            }));
+
+            return;
+        }
+
+        setNodes((currentNodes) => currentNodes.map((node) => {
             if (!node.id.startsWith('action-')) {
-                return;
+                return node;
             }
 
-            // Calculate which position the node would drop into
-            const gridX = Math.round(node.position.x / 450); // Updated from 350 to 450
-            const newIndex = Math.max(0, Math.min(gridX, actions.length - 1));
-            const oldIndex = actions.findIndex(a => `action-${a.id}` === node.id);
+            const orderedIndex = orderedActionIds.indexOf(node.id.slice('action-'.length));
 
-            // If we're back to the original position, reset preview
-            if (newIndex === oldIndex) {
-                setPreviewIndex(null);
-                // Reset all nodes to original positions
-                setNodes(initialNodes);
-                setEdges(initialEdges);
-                return;
-            }
+            return {
+                ...node,
+                position: { x: orderedIndex * 450, y: 50 },
+            };
+        }));
 
-            // Only update if the preview index changed
-            if (newIndex !== previewIndex) {
-                setPreviewIndex(newIndex);
+        const reordered = await onReorderActions(orderedActionIds);
 
-                // Reorder actions for edge calculation
-                const previewActions = [...actions];
-                const [movedAction] = previewActions.splice(oldIndex, 1);
-                previewActions.splice(newIndex, 0, movedAction);
-
-                // Update node positions (not recreating them, just repositioning)
-                setNodes(prevNodes => 
-                    prevNodes.map(n => {
-                        if (n.id === 'start-phase') {
-                            return { ...n, position: { x: -300, y: 50 } };
-                        }
-                        if (n.id.startsWith('action-')) {
-                            const actionId = n.id;
-                            const currentIndex = actions.findIndex(a => `action-${a.id}` === actionId);
-                            
-                            if (actionId === node.id) {
-                                // The dragged node - snap to grid position
-                                return {
-                                    ...n,
-                                    position: {
-                                        x: newIndex * 450, // Updated from 350 to 450
-                                        y: 50,
-                                    },
-                                };
-                            } else {
-                                // Calculate new position for other nodes
-                                let visualIndex = currentIndex;
-                                
-                                if (oldIndex < newIndex) {
-                                    // Dragging right
-                                    if (currentIndex > oldIndex && currentIndex <= newIndex) {
-                                        visualIndex = currentIndex - 1;
-                                    }
-                                } else if (oldIndex > newIndex) {
-                                    // Dragging left
-                                    if (currentIndex >= newIndex && currentIndex < oldIndex) {
-                                        visualIndex = currentIndex + 1;
-                                    }
-                                }
-                                
-                                return {
-                                    ...n,
-                                    position: {
-                                        x: visualIndex * 450, // Updated from 350 to 450
-                                        y: 50,
-                                    },
-                                };
-                            }
-                        }
-                        if (n.id === 'next-phase') {
-                            return { ...n, position: { x: actions.length * 450, y: 50 } }; // Updated from 350 to 450
-                        }
-                        return n;
-                    })
-                );
-
-                // Update edges based on new preview order
-                const newEdges = [];
-
-                // Connect start node to first action
-                if (currentPhaseName && previewActions.length > 0) {
-                    newEdges.push({
-                        id: 'edge-start-to-first',
-                        source: 'start-phase',
-                        target: `action-${previewActions[0].id}`,
-                        type: 'default',
-                        animated: true,
-                        markerEnd: {
-                            type: MarkerType.ArrowClosed,
-                            width: 20,
-                            height: 20,
-                        },
-                        style: { strokeWidth: 2, stroke: '#16a34a' },
-                    });
+        if (reordered === false) {
+            draggedActionOrder.current = currentActionIds;
+            setNodes((currentNodes) => currentNodes.map((node) => {
+                if (!node.id.startsWith('action-')) {
+                    return node;
                 }
 
-                // Connect actions to each other in preview order
-                for (let i = 0; i < previewActions.length - 1; i++) {
-                    const currentAction = previewActions[i];
-                    const nextAction = previewActions[i + 1];
-                    
-                    // Normal forward edge (approve for review, normal for others)
-                    newEdges.push({
-                        id: `edge-${currentAction.id}-${nextAction.id}`,
-                        source: `action-${currentAction.id}`,
-                        sourceHandle: currentAction.action_type === 'review' ? 'approve' : null,
-                        target: `action-${nextAction.id}`,
-                        type: 'default',
-                        animated: true,
-                        label: currentAction.action_type === 'review' ? 'Approve' : undefined,
-                        labelBgStyle: { fill: '#22c55e', fillOpacity: 0.9 },
-                        labelStyle: { fill: '#fff', fontSize: 11, fontWeight: 600 },
-                        markerEnd: {
-                            type: MarkerType.ArrowClosed,
-                            width: 20,
-                            height: 20,
-                            color: currentAction.action_type === 'review' ? '#22c55e' : '#3b82f6',
-                        },
-                        style: { 
-                            strokeWidth: 2, 
-                            stroke: currentAction.action_type === 'review' ? '#22c55e' : '#3b82f6',
-                        },
-                    });
-                    
-                    // Add deny (backward) arrow for review actions - goes from bottom to bottom of previous
-                    if (currentAction.action_type === 'review' && i > 0) {
-                        const targetIndex = Math.max(0, i - 1);
-                        newEdges.push({
-                            id: `edge-${currentAction.id}-deny`,
-                            source: `action-${currentAction.id}`,
-                            sourceHandle: 'deny',
-                            target: `action-${previewActions[targetIndex].id}`,
-                            targetHandle: 'deny-target',
-                            type: 'deny', // Use custom deny edge type
-                            animated: true,
-                            label: 'Deny',
-                            labelBgStyle: { fill: '#ef4444', fillOpacity: 0.9 },
-                            labelStyle: { fill: '#fff', fontSize: 11, fontWeight: 600 },
-                            markerEnd: {
-                                type: MarkerType.ArrowClosed,
-                                width: 20,
-                                height: 20,
-                                color: '#ef4444',
-                            },
-                            style: { 
-                                strokeWidth: 2, 
-                                stroke: '#ef4444',
-                            },
-                        });
-                    }
-                }
+                const originalIndex = currentActionIds.indexOf(node.id.slice('action-'.length));
 
-                // Connect last action to next phase
-                if (nextPhase && previewActions.length > 0) {
-                    newEdges.push({
-                        id: 'edge-last-to-next-phase',
-                        source: `action-${previewActions[previewActions.length - 1].id}`,
-                        target: 'next-phase',
-                        type: 'default',
-                        animated: true,
-                        markerEnd: {
-                            type: MarkerType.ArrowClosed,
-                            width: 20,
-                            height: 20,
-                        },
-                        style: { strokeWidth: 2, stroke: '#3b82f6', strokeDasharray: '5,5' },
-                    });
-                }
+                return {
+                    ...node,
+                    position: { x: originalIndex * 450, y: 50 },
+                };
+            }));
+            return;
+        }
 
-                setEdges(newEdges);
-            }
-        },
-        [actions, setNodes, setEdges, initialNodes, initialEdges, previewIndex, currentPhaseName, nextPhase]
-    );
-
-    const onNodeDragStop = useCallback(
-        (event, node) => {
-            // Only allow reordering of action nodes
-            if (!node.id.startsWith('action-')) {
-                // Clear preview state for non-action nodes
-                setDraggedNodeId(null);
-                setPreviewIndex(null);
-                return;
-            }
-
-            const oldIndex = actions.findIndex(a => `action-${a.id}` === node.id);
-            const gridX = Math.round(node.position.x / 450); // Snap to grid - updated from 350 to 450
-            const newIndex = Math.max(0, Math.min(gridX, actions.length - 1));
-
-            console.log('onNodeDragStop:', { oldIndex, newIndex, nodeId: node.id });
-
-            if (oldIndex !== newIndex && oldIndex !== -1) {
-                console.log('Calling onReorder - positions changed');
-                // Set reordering flag to prevent useEffect from resetting nodes
-                setIsReordering(true);
-                
-                // Reorder the actions array
-                const reorderedActions = [...actions];
-                const [movedAction] = reorderedActions.splice(oldIndex, 1);
-                reorderedActions.splice(newIndex, 0, movedAction);
-
-                // Call backend to save new order - THIS SHOULD ONLY HAPPEN ON DROP
-                onReorder?.(reorderedActions);
-                
-                // Clear the reordering flag after a short delay (backend should have responded by then)
-                setTimeout(() => {
-                    setIsReordering(false);
-                }, 1000);
-                
-                // Clear drag/preview states immediately so user can start another drag
-                setDraggedNodeId(null);
-                setPreviewIndex(null);
-            } else {
-                console.log('No reorder - same position');
-                // No reorder, just reset positions
-                setDraggedNodeId(null);
-                setPreviewIndex(null);
-                setNodes(initialNodes);
-            }
-        },
-        [actions, onReorder, setNodes, initialNodes]
-    );
+        draggedActionOrder.current = orderedActionIds;
+    };
 
     const graphControls = (
         <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
@@ -749,33 +889,22 @@ export default function ActionsFlowGraph({ actions = [], onEdit, onDelete, onReo
         </div>
     );
 
-    if (!actions || actions.length === 0) {
-        return (
-            <div className="relative flex h-full items-center justify-center rounded-xl border border-dashed border-border bg-muted/30">
-                {graphControls}
-                <div className="text-center space-y-2">
-                    <Clock className="mx-auto size-12 text-muted-foreground/50" />
-                    <p className="text-sm text-muted-foreground">No actions in this phase yet.</p>
-                    <p className="text-xs text-muted-foreground">Click "Add action" to get started.</p>
-                </div>
-            </div>
-        );
-    }
-
     return (
         <div
             ref={graphRef}
             className="relative h-full w-full overflow-hidden rounded-xl border border-border bg-background fullscreen:bg-background"
         >
             {graphControls}
+            {actions.length === 0 ? (
+                <div className="pointer-events-none absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-md border border-border bg-background/90 px-3 py-2 text-center text-xs text-muted-foreground shadow-sm backdrop-blur">
+                    No actions in this phase yet. Use Add action to get started.
+                </div>
+            ) : null}
             <ReactFlow
                 nodes={nodes}
                 edges={edges}
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
-                onNodeDragStart={onNodeDragStart}
-                onNodeDrag={onNodeDrag}
-                onNodeDragStop={onNodeDragStop}
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
                 fitView
@@ -789,7 +918,9 @@ export default function ActionsFlowGraph({ actions = [], onEdit, onDelete, onReo
                     animated: true,
                 }}
                 snapToGrid={true}
-                snapGrid={[450, 50]}
+                snapGrid={[25, 25]}
+                onNodeDrag={onNodeDrag}
+                onNodeDragStop={onNodeDragStop}
                 nodesDraggable={true}
                 nodesConnectable={false}
                 elementsSelectable={true}

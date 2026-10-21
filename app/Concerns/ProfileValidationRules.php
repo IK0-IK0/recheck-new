@@ -17,7 +17,6 @@ trait ProfileValidationRules
         return [
             'name' => $this->nameRules(),
             'email' => $this->emailRules($userId),
-            'theme_color' => $this->themeColorRules(),
         ];
     }
 
@@ -47,17 +46,5 @@ trait ProfileValidationRules
                 ? Rule::unique('users', 'email')
                 : Rule::unique('users', 'email')->ignore($userId),
         ];
-    }
-
-    /**
-     * Get the validation rules for theme_color.
-     *
-     * Resolves THEME_COLORS from the using class (e.g. ProfileUpdateRequest).
-     *
-     * @return array<int, ValidationRule|array<mixed>|string>
-     */
-    protected function themeColorRules(): array
-    {
-        return ['sometimes', 'nullable', 'string', Rule::in(static::THEME_COLORS)];
     }
 }

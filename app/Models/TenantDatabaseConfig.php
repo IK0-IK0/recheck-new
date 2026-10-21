@@ -19,8 +19,13 @@ class TenantDatabaseConfig extends Model
             return null;
         }
 
+        $institutionId = $user->getInstitutionId();
+        if ($institutionId === null) {
+            return null;
+        }
+
         $config = static::query()
-            ->where('tenant_id', $user->getKey())
+            ->where('tenant_id', $institutionId)
             ->where('is_active', true)
             ->first();
 

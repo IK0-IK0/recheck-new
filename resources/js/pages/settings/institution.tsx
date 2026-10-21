@@ -14,6 +14,7 @@ type Props = {
     institutionName?: string;
     institutionEmail?: string;
     themeColor: string;
+    canEditTheme: boolean;
 };
 
 const THEME_COLOR_CLASSES: Record<string, string> = {
@@ -32,10 +33,10 @@ const THEME_COLOR_CLASSES: Record<string, string> = {
     teal: 'bg-teal-600',
 };
 
-export default function Institution({ institutionName, institutionEmail, themeColor }: Props) {
+export default function Institution({ institutionName, institutionEmail, themeColor, canEditTheme }: Props) {
+    const [isProcessing, setIsProcessing] = useState(false);
     const [selectedThemeColor, setSelectedThemeColor] = useState(themeColor);
     const [hoveredColor, setHoveredColor] = useState<string | null>(null);
-    const [isProcessing, setIsProcessing] = useState(false);
 
     const handleSubmit = () => {
         const form = document.getElementById('institution-form') as HTMLFormElement;
@@ -126,48 +127,56 @@ export default function Institution({ institutionName, institutionEmail, themeCo
                                         {/* Divider */}
                                         <div className="border-t border-border" />
 
-                                        {/* Theme Color Section */}
                                         <div className="space-y-2">
                                             <div>
                                                 <Label className="text-xs font-medium">Theme Color</Label>
-                                                <p className="mt-0.5 text-xs text-muted-foreground">Choose a color that represents your institution</p>
+                                                <p className="mt-0.5 text-xs text-muted-foreground">
+                                                    {canEditTheme ? 'Choose a color that represents your institution' : 'Current institution theme'}
+                                                </p>
                                             </div>
-                                            
-                                            <div className="flex w-full gap-1">
-                                                {THEME_COLORS.map((color) => {
-                                                    const selected = selectedThemeColor === color;
-                                                    const isHovered = hoveredColor === color;
-                                                    const shouldExpand = isHovered || (selected && !hoveredColor);
+                                            {canEditTheme ? (
+                                                <div className="flex w-full gap-1">
+                                                    {THEME_COLORS.map((color) => {
+                                                        const selected = selectedThemeColor === color;
+                                                        const shouldExpand = hoveredColor === color || (selected && !hoveredColor);
 
-                                                    return (
-                                                        <label
-                                                            key={color}
-                                                            onMouseEnter={() => setHoveredColor(color)}
-                                                            onMouseLeave={() => setHoveredColor(null)}
-                                                            className={cn(
-                                                                'relative cursor-pointer overflow-hidden rounded-md transition-all duration-300 ease-in-out',
-                                                                'h-24',
-                                                                shouldExpand ? 'basis-16 flex-shrink-0 flex-grow-0' : 'basis-4 flex-grow flex-shrink'
-                                                            )}
-                                                        >
-                                                            <input
-                                                                type="radio"
-                                                                name="theme_color"
-                                                                value={color}
-                                                                checked={selected}
-                                                                onChange={() => setSelectedThemeColor(color)}
-                                                                className="sr-only"
-                                                            />
-                                                            <div className={cn(
-                                                                'relative flex h-full w-full flex-col items-center justify-center gap-2 rounded-md px-1 py-2 transition-all duration-300',
-                                                                THEME_COLOR_CLASSES[color] ?? 'bg-muted',
-                                                                selected && 'ring-2 ring-inset ring-foreground'
-                                                            )}>
-                                                            </div>
-                                                        </label>
-                                                    );
-                                                })}
-                                            </div>
+                                                        return (
+                                                            <label
+                                                                key={color}
+                                                                onMouseEnter={() => setHoveredColor(color)}
+                                                                onMouseLeave={() => setHoveredColor(null)}
+                                                                className={cn(
+                                                                    'relative cursor-pointer overflow-hidden rounded-md transition-all duration-300 ease-in-out',
+                                                                    'h-24',
+                                                                    shouldExpand ? 'basis-16 flex-shrink-0 flex-grow-0' : 'basis-4 flex-grow flex-shrink'
+                                                                )}
+                                                            >
+                                                                <input
+                                                                    type="radio"
+                                                                    name="theme_color"
+                                                                    value={color}
+                                                                    checked={selected}
+                                                                    onChange={() => setSelectedThemeColor(color)}
+                                                                    className="sr-only"
+                                                                />
+                                                                <div className={cn(
+                                                                    'relative flex h-full w-full flex-col items-center justify-center gap-2 rounded-md px-1 py-2 transition-all duration-300',
+                                                                    THEME_COLOR_CLASSES[color] ?? 'bg-muted',
+                                                                    selected && 'ring-2 ring-inset ring-foreground'
+                                                                )} />
+                                                            </label>
+                                                        );
+                                                    })}
+                                                </div>
+                                            ) : (
+                                                <div className="flex items-center gap-2">
+                                                    <span
+                                                        aria-label={`${themeColor} theme color`}
+                                                        className={`size-6 rounded-md ${THEME_COLOR_CLASSES[themeColor] ?? 'bg-muted'}`}
+                                                    />
+                                                    <span className="text-sm capitalize">{themeColor}</span>
+                                                </div>
+                                            )}
                                         </div>
 
                                         {/* Hidden submit button for external trigger */}

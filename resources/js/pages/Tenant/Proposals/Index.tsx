@@ -1,39 +1,225 @@
-import { Head, Link, useForm } from '@inertiajs/react';
-import { ClipboardList, Plus, ChevronRight, Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Head, router, useForm } from '@inertiajs/react';
+import { CalendarDays, Check, CheckCircle2, ChevronDown, ClipboardList, FileText, GitBranch, Loader2, Plus, Upload } from 'lucide-react';
 import { useState } from 'react';
+import { toast } from 'sonner';
+import DocumentUploadModal from '@/components/DocumentUploadModal';
+import ProposalTestingToggle from '@/components/ProposalTestingToggle';
+import PhasePipeline from '@/components/PhasePipeline';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import Tracking from '@/pages/Tenant/Proposals/Tracking';
 
 type Process = {
     id: number;
     name: string;
+    phases?: Phase[];
 };
 
 type Phase = {
     id: number;
     name: string;
+    order: number;
+    actions?: PhaseAction[];
+};
+
+type RequiredDocument = {
+    id: number;
+    name: string;
+    file_type: string;
+};
+
+type PhaseAction = {
+    id: number;
+    name: string;
+    action_type: 'submit' | 'review';
+    decision_mode: 'approve_deny' | 'custom';
+    custom_decision_branches?: { id: string; label: string; destination: string }[] | null;
+    description?: string | null;
+    requires_file?: boolean;
+    documents?: RequiredDocument[];
 };
 
 type Proposal = {
     id: number;
+    user_id: number;
     title: string;
+    type?: string | null;
     process: Process | null;
     current_phase: Phase | null;
+    current_action: PhaseAction | null;
+    can_review?: boolean;
+    completed_at: string | null;
     created_at: string;
+    phase_transitions: {
+        id: number;
+        phase: Phase;
+        created_at: string;
+    }[];
+    action_transitions: {
+        id: number;
+        action: PhaseAction;
+        decision: string | null;
+        created_at: string;
+    }[];
+    documents: {
+        id: number;
+        name: string;
+        pivot: {
+            phase_id: number | null;
+            required_document_id: number | null;
+            action_id: number | null;
+        };
+    }[];
 };
 
 type Props = {
     proposals: Proposal[];
+    isTracking: boolean;
+    viewerId: number;
+    viewerType: string;
+    selectedProposalId: number | null;
 };
 
-export default function Index({ proposals }: Props) {
+export default function Index({ proposals, isTracking, viewerId, viewerType, selectedProposalId }: Props) {
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+    const [isSwitchProposalModalOpen, setIsSwitchProposalModalOpen] = useState(false);
+    const [activeProposalId, setActiveProposalId] = useState<number | null>(
+        proposals.some((proposal) => proposal.id === selectedProposalId)
+            ? selectedProposalId
+            : proposals[0]?.id ?? null,
+    );
+    const [selectedPhaseIdByProposal, setSelectedPhaseIdByProposal] = useState<Record<number, number>>({});
+    const [isAdvancing, setIsAdvancing] = useState(false);
     const { data, setData, post, processing, errors, reset } = useForm({
         title: '',
     });
+    const activeProposal = proposals.find((proposal) => proposal.id === activeProposalId) ?? proposals[0] ?? null;
+    const proposalPhases = activeProposal?.process?.phases ?? [];
+    const activePhaseIndex = proposalPhases.findIndex((phase) => phase.id === activeProposal?.current_phase?.id);
+    const requestedSelectedPhaseId = activeProposal
+        ? selectedPhaseIdByProposal[activeProposal.id] ?? activeProposal.current_phase?.id ?? proposalPhases[0]?.id ?? null
+        : null;
+    const selectedPhase = proposalPhases.find((phase) => phase.id === requestedSelectedPhaseId)
+        ?? activeProposal?.current_phase
+        ?? proposalPhases[0]
+        ?? null;
+    const selectedPhaseId = selectedPhase?.id ?? null;
+    const activePhaseName = activeProposal?.current_phase?.name ?? null;
+    const selectedPhaseName = selectedPhase?.name ?? null;
+    const isCurrentPhaseSelected = selectedPhaseId === activeProposal?.current_phase?.id;
+    const activeAction = isCurrentPhaseSelected ? activeProposal?.current_action ?? null : null;
+    const pipelinePhases = proposalPhases.map((phase, index) => {
+        const isCurrent = phase.id === activeProposal?.current_phase?.id;
+        const isComplete = activePhaseIndex >= 0 && index < activePhaseIndex;
 
+        return {
+            ...phase,
+            isCurrent,
+            isComplete,
+            isClickable: activePhaseIndex >= 0 ? index <= activePhaseIndex : index === 0,
+            detail: isCurrent ? 'Current' : isComplete ? 'Complete' : index === 0 && activePhaseIndex === -1 ? 'Next' : 'Upcoming',
+        };
+    });
+    const historyEntries = activeProposal
+        ? [
+              { phaseName: 'Proposal created', createdAt: activeProposal.created_at, isCreation: true, isAction: false },
+              ...activeProposal.phase_transitions.map((entry) => ({
+                  phaseName: entry.phase.name,
+                  createdAt: entry.created_at,
+                  isCreation: false,
+                  isAction: false,
+              })),
+              ...activeProposal.action_transitions.map((entry) => ({
+                  phaseName: `${entry.action.name}${entry.decision
+                      ? ` · ${entry.action.custom_decision_branches?.find((branch) => branch.id === entry.decision)?.label ?? entry.decision}`
+                      : ''}`,
+                  createdAt: entry.created_at,
+                  isCreation: false,
+                  isAction: true,
+              })),
+          ].sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime())
+        : [];
+    const selectedPhaseActions = selectedPhase?.actions ?? [];
+    const requiredDocuments = new Map<number, RequiredDocument>();
+
+    (activeAction ? [activeAction] : selectedPhaseActions).forEach((action) => {
+        action.documents?.forEach((document: RequiredDocument) => {
+            requiredDocuments.set(document.id, document);
+        });
+    });
+    const phaseDocuments = Array.from(requiredDocuments.values());
+    const uploadedDocuments = activeProposal?.documents.filter(
+        (document) => Number(document.pivot.phase_id) === selectedPhase?.id
+            && (!activeAction || Number(document.pivot.action_id) === activeAction.id),
+    ) ?? [];
+    const uploadedRequiredDocumentIds = new Set(uploadedDocuments.flatMap((document) => (
+        document.pivot.required_document_id === null ? [] : [Number(document.pivot.required_document_id)]
+    )));
+
+    const handleUploadRequiredFile = async (
+        requiredDocumentId: number,
+        documentName: string,
+        label: string,
+        name: string,
+        files: File[],
+    ) => {
+        if (!activeProposal || !selectedPhase || files.length === 0) {
+            return false;
+        }
+
+        const formData = new FormData();
+        formData.append('file', files[0]);
+        formData.append('label', label);
+        formData.append('name', name);
+        formData.append('phase_id', String(selectedPhase.id));
+        formData.append('required_document_id', String(requiredDocumentId));
+        if (activeAction) {
+            formData.append('action_id', String(activeAction.id));
+        }
+
+        return new Promise<boolean>((resolve) => router.post(`/tenant/proposals/${activeProposal.id}/documents`, formData, {
+            preserveScroll: true,
+            onSuccess: () => {
+                toast.success(`${documentName} uploaded.`);
+                resolve(true);
+            },
+            onError: (uploadErrors) => {
+                toast.error(uploadErrors.file || uploadErrors.name || uploadErrors.storage || uploadErrors.phase_id || uploadErrors.required_document_id || uploadErrors.action_id || 'File upload failed.');
+                resolve(false);
+            },
+        }));
+    };
+
+    const handleSubmitAction = () => {
+        if (!activeProposal || !activeAction || activeAction.action_type !== 'submit' || isAdvancing) {
+            return;
+        }
+
+        router.post(`/tenant/proposals/${activeProposal.id}/submit`, {}, {
+            preserveScroll: true,
+            onStart: () => setIsAdvancing(true),
+            onFinish: () => setIsAdvancing(false),
+            onSuccess: () => toast.success('Action submitted successfully.'),
+            onError: (submitErrors) => toast.error(submitErrors.workflow || 'The action could not be submitted.'),
+        });
+    };
+
+    const handleReviewDecision = (decision: string) => {
+        if (!activeProposal || !activeAction || activeAction.action_type !== 'review' || isAdvancing) {
+            return;
+        }
+
+        router.post(`/tenant/proposals/${activeProposal.id}/review`, { decision }, {
+            preserveScroll: true,
+            onStart: () => setIsAdvancing(true),
+            onFinish: () => setIsAdvancing(false),
+            onSuccess: () => toast.success('Review decision submitted.'),
+            onError: (reviewErrors) => toast.error(reviewErrors.workflow || 'The review decision could not be submitted.'),
+        });
+    };
     const handleCreate = (e: React.FormEvent) => {
         e.preventDefault();
         post('/tenant/proposals', {
@@ -44,84 +230,368 @@ export default function Index({ proposals }: Props) {
         });
     };
 
+    if (isTracking) {
+        return <Tracking proposals={proposals} viewerId={viewerId} viewerType={viewerType} />;
+    }
+
     return (
-        <div className="flex h-full flex-col bg-background">
+        <div className="flex min-h-svh flex-1 flex-col bg-transparent md:min-h-0">
             <Head title="Proposals" />
 
-            <div className="flex items-center justify-between border-b border-border bg-surface px-6 py-4">
-                <div>
-                    <h1 className="text-xl font-bold">Proposals</h1>
-                    <p className="text-sm text-muted-foreground">Manage and track your research proposals.</p>
-                </div>
-                <Button onClick={() => setIsCreateModalOpen(true)} className="gap-2">
-                    <Plus className="size-4" />
-                    New Proposal
-                </Button>
-            </div>
-
-            <div className="flex-1 overflow-auto p-6">
-                <div className="mx-auto max-w-5xl space-y-6">
-                    <div className="rounded-lg border border-border bg-card shadow-sm">
-                        <div className="p-0">
-                            {proposals.length > 0 ? (
-                                <table className="min-w-full divide-y divide-border">
-                                    <thead className="bg-muted/50">
-                                        <tr>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Title</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Workflow Process</th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Current Phase</th>
-                                            <th className="px-6 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Action</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-border bg-card">
-                                        {proposals.map((proposal) => (
-                                            <tr key={proposal.id} className="hover:bg-muted/50 transition-colors">
-                                                <td className="px-6 py-4">
-                                                    <div className="flex items-center gap-3">
-                                                        <ClipboardList className="size-5 text-primary" />
-                                                        <span className="font-medium">{proposal.title}</span>
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4 text-sm text-muted-foreground">
-                                                    {proposal.process ? proposal.process.name : 'Unassigned'}
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    {proposal.current_phase ? (
-                                                        <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-700/10 dark:bg-blue-900/30 dark:text-blue-400 dark:ring-blue-400/30">
-                                                            {proposal.current_phase.name}
-                                                        </span>
-                                                    ) : (
-                                                        <span className="text-sm text-muted-foreground">Not started</span>
-                                                    )}
-                                                </td>
-                                                <td className="px-6 py-4 text-right text-sm">
-                                                    <Button variant="ghost" size="sm" asChild>
-                                                        <Link href={`/tenant/proposals/${proposal.id}`}>
-                                                            View
-                                                            <ChevronRight className="ml-1 size-4" />
-                                                        </Link>
-                                                    </Button>
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            ) : (
-                                <div className="flex flex-col items-center justify-center py-16 text-center">
-                                    <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-primary/10">
-                                        <ClipboardList className="size-6 text-primary" />
-                                    </div>
-                                    <h3 className="mb-1 text-lg font-semibold">No proposals found</h3>
-                                    <p className="mb-4 text-sm text-muted-foreground max-w-sm">
-                                        You don't have any proposals yet. Get started by creating your first proposal.
-                                    </p>
-                                    <Button onClick={() => setIsCreateModalOpen(true)}>Create Proposal</Button>
-                                </div>
-                            )}
-                        </div>
+            <div className="flex items-center justify-between border-b border-border bg-surface px-6 py-3">
+                <div className="flex items-center gap-3">
+                    <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10">
+                        <ClipboardList className="size-4 text-primary" />
+                    </div>
+                    <div>
+                        <h1 className="text-lg font-semibold">Proposals</h1>
+                        <p className="text-xs text-muted-foreground">Manage and track your research proposals.</p>
                     </div>
                 </div>
+                <div className="flex items-center gap-2">
+                    <ProposalTestingToggle />
+                    <Button onClick={() => setIsCreateModalOpen(true)} className="gap-2">
+                        <Plus className="size-4" />
+                        New Proposal
+                    </Button>
+                </div>
             </div>
+
+            <div className="flex-1 p-4 lg:min-h-0 lg:overflow-hidden lg:p-6">
+                <div className="mx-auto flex w-full max-w-6xl flex-col lg:h-full lg:min-h-0">
+                    {proposals.length > 0 && activeProposal ? (
+                        <section id="active-proposal-phases" className="flex flex-col lg:min-h-0 lg:flex-1">
+                            <header className="mb-5 grid shrink-0 gap-5 rounded-lg border border-border bg-card p-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+                                <div className="min-w-0">
+                                    <h2 className="flex min-w-0 items-center gap-2 text-xl font-semibold tracking-tight">
+                                        <FileText className="size-5 shrink-0 text-muted-foreground" />
+                                        <span className="truncate">{activeProposal.title}</span>
+                                    </h2>
+                                    <p className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
+                                        <GitBranch className="size-4 shrink-0" />
+                                        <span className="truncate">
+                                            {activeProposal.process?.name ?? 'No workflow process assigned'}
+                                        </span>
+                                    </p>
+                                    <span className="mt-3 inline-flex rounded-md bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
+                                        #{activeProposal.id}
+                                    </span>
+                                    <p className="mt-1.5 text-xs text-muted-foreground">
+                                        Type: {activeProposal.type ?? 'Not specified'}
+                                    </p>
+                                </div>
+                                <div className="flex flex-col items-start gap-4 sm:items-end">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="shrink-0"
+                                        onClick={() => setIsSwitchProposalModalOpen(true)}
+                                    >
+                                        Switch proposal
+                                        <ChevronDown className="ml-1 size-4" />
+                                    </Button>
+                                    <div className="space-y-1 sm:text-right">
+                                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Status</p>
+                                        <Badge variant="outline">
+                                            <ClipboardList />
+                                            {activeProposal.completed_at ? 'Complete' : activePhaseName ?? 'Not started'}
+                                        </Badge>
+                                        <p className="flex items-center gap-1.5 text-xs text-muted-foreground sm:justify-end">
+                                            <CalendarDays className="size-3.5" />
+                                            Created{' '}
+                                            <time dateTime={activeProposal.created_at}>
+                                                {new Date(activeProposal.created_at).toLocaleDateString()}
+                                            </time>
+                                        </p>
+                                    </div>
+                                </div>
+                            </header>
+
+                            <div className="shrink-0 overflow-hidden rounded-lg border border-border bg-card">
+                                <PhasePipeline
+                                    phases={pipelinePhases}
+                                    activePhaseId={selectedPhaseId ?? undefined}
+                                    onPhaseSelect={(phaseId) => {
+                                        if (!activeProposal) {
+                                            return;
+                                        }
+
+                                        const phaseIndex = proposalPhases.findIndex((phase) => phase.id === phaseId);
+                                        const isSelectable = activePhaseIndex >= 0
+                                            ? phaseIndex <= activePhaseIndex
+                                            : phaseIndex === 0;
+
+                                        if (!isSelectable) {
+                                            return;
+                                        }
+
+                                        setSelectedPhaseIdByProposal((current) => ({
+                                            ...current,
+                                            [activeProposal.id]: phaseId,
+                                        }));
+                                    }}
+                                    showPhaseDetails={false}
+                                    centerActivePhase
+                                />
+                            </div>
+
+                            <div className="mt-6 grid grid-cols-1 items-stretch gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-2">
+                                <div className="flex flex-col gap-4 lg:min-h-0">
+                                    <section className="flex flex-col rounded-lg border border-border bg-card p-5 lg:min-h-0 lg:flex-1">
+                                        <div className="flex h-8 items-center">
+                                            <h3 className="text-sm font-semibold">History</h3>
+                                        </div>
+                                        <ol className="custom-scrollbar mt-3 space-y-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-2">
+                                            {historyEntries.map((entry, index) => (
+                                                <li
+                                                    key={`${entry.createdAt}-${index}`}
+                                                    className={`border-l-2 pl-3 ${entry.isCreation ? 'border-border' : 'border-primary/40'}`}
+                                                >
+                                                    <p className="text-sm text-foreground">
+                                                        {entry.isCreation
+                                                            ? entry.phaseName
+                                                            : entry.isAction
+                                                              ? `Completed action · ${entry.phaseName}`
+                                                              : `Moved to ${entry.phaseName}`}
+                                                    </p>
+                                                    <time className="text-xs text-muted-foreground">
+                                                        {new Date(entry.createdAt).toLocaleString()}
+                                                    </time>
+                                                </li>
+                                            ))}
+                                        </ol>
+                                    </section>
+                                </div>
+
+                                <section className="flex min-w-0 flex-col rounded-lg border border-border bg-card p-5 lg:min-h-0">
+                                    <div className="flex h-8 items-center justify-between gap-3">
+                                        <h3 className="text-sm font-semibold">
+                                            {selectedPhaseName
+                                                ? `Actions · ${selectedPhaseName}${activeAction ? ` · ${activeAction.name}` : ''}`
+                                                : 'Actions'}
+                                        </h3>
+                                    </div>
+                                    {selectedPhase ? (
+                                        <div className="mt-5 flex flex-col gap-4 lg:min-h-0 lg:flex-1">
+                                            {activeAction?.description ? (
+                                                <p className="text-sm text-muted-foreground">{activeAction.description}</p>
+                                            ) : null}
+                                            {phaseDocuments.length > 0 ? (
+                                                <div className="lg:min-h-0 lg:flex-1">
+                                                    <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                                        {activeAction ? 'Required documents for this action' : 'Required documents'}
+                                                    </p>
+                                                    <ul className="custom-scrollbar space-y-2 lg:max-h-56 lg:overflow-y-auto lg:pr-1">
+                                                        {phaseDocuments.map((document) => {
+                                                            const submittedDocument = uploadedDocuments.find(
+                                                                (uploaded) => Number(uploaded.pivot.required_document_id) === document.id,
+                                                            );
+
+                                                            return (
+                                                                <li
+                                                                    key={document.id}
+                                                                    className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2.5"
+                                                                >
+                                                                    <div className="flex min-w-0 items-center gap-3">
+                                                                        <FileText className="size-4 shrink-0 text-muted-foreground" />
+                                                                        <div className="min-w-0">
+                                                                            <p className="truncate text-sm font-medium">{document.name}</p>
+                                                                            <p className="truncate text-xs text-muted-foreground">
+                                                                                {submittedDocument ? `Uploaded: ${submittedDocument.name}` : 'Not uploaded'}
+                                                                            </p>
+                                                                        </div>
+                                                                    </div>
+                                                                    {activeAction?.action_type === 'review' ? null : <DocumentUploadModal
+                                                                        title={`Upload ${document.name}`}
+                                                                        description={`Upload the file required for ${activeAction?.name ?? selectedPhaseName}.`}
+                                                                        submitLabel="Upload file"
+                                                                        initialValues={{ name: document.name, label: 'doc' }}
+                                                                        onSubmit={({ name, label, files }: { name: string; label: string; files: File[] }) =>
+                                                                            handleUploadRequiredFile(document.id, document.name, label, name, files)
+                                                                        }
+                                                                        trigger={
+                                                                            <Button type="button" variant="outline" size="sm" className="shrink-0">
+                                                                                <Upload className="mr-1.5 size-3.5" />
+                                                                                Upload
+                                                                            </Button>
+                                                                        }
+                                                                    />}
+                                                                </li>
+                                                            );
+                                                        })}
+                                                    </ul>
+                                                </div>
+                                            ) : (
+                                                <p className="rounded-md border border-dashed border-border px-3 py-5 text-center text-sm text-muted-foreground">
+                                                    No documents are required for this phase.
+                                                </p>
+                                            )}
+                                            {activeAction && activeAction.action_type === 'review' && !activeProposal.can_review ? (
+                                                <p className="rounded-md border border-dashed border-border px-3 py-5 text-center text-sm text-muted-foreground">
+                                                    Waiting for an assigned reviewer to complete this action.
+                                                </p>
+                                            ) : null}
+                                            {uploadedDocuments.length > 0 ? (
+                                                <div>
+                                                    <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                                        Files submitted for this phase
+                                                    </p>
+                                                    <ul className="custom-scrollbar space-y-2 lg:max-h-32 lg:overflow-y-auto lg:pr-1">
+                                                        {uploadedDocuments.map((document) => (
+                                                            <li
+                                                                key={document.id}
+                                                                className="flex min-w-0 items-center gap-3 rounded-md border border-border px-3 py-2"
+                                                            >
+                                                                <FileText className="size-4 shrink-0 text-muted-foreground" />
+                                                                <p className="truncate text-sm font-medium">{document.name}</p>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                </div>
+                                            ) : null}
+                                        </div>
+                                    ) : (
+                                        <p className="mt-3 text-sm text-muted-foreground">
+                                            This proposal has no workflow phases configured.
+                                        </p>
+                                    )}
+                                    <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 pt-6 lg:mt-auto">
+                                        <p className="flex items-center gap-1.5 text-sm text-muted-foreground" aria-live="polite">
+                                            <CheckCircle2 className="size-4" />
+                                            {phaseDocuments.filter((document) => uploadedRequiredDocumentIds.has(document.id)).length}
+                                            {' / '}
+                                            {phaseDocuments.length} files complete
+                                        </p>
+                                        {activeAction?.action_type === 'submit' && isCurrentPhaseSelected ? (
+                                            <Button
+                                                type="button"
+                                                disabled={isAdvancing || phaseDocuments.some((document) => !uploadedRequiredDocumentIds.has(document.id))}
+                                                onClick={handleSubmitAction}
+                                            >
+                                                {isAdvancing ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                                                Submit
+                                            </Button>
+                                        ) : null}
+                                        {activeAction?.action_type === 'review' && isCurrentPhaseSelected && activeProposal.can_review ? (
+                                            activeAction.decision_mode === 'custom'
+                                                ? activeAction.custom_decision_branches?.map((branch) => (
+                                                    <Button
+                                                        key={branch.id}
+                                                        type="button"
+                                                        disabled={isAdvancing}
+                                                        onClick={() => handleReviewDecision(branch.id)}
+                                                    >
+                                                        {isAdvancing ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                                                        {branch.label}
+                                                    </Button>
+                                                ))
+                                                : <>
+                                                    <Button type="button" disabled={isAdvancing} onClick={() => handleReviewDecision('approve')}>
+                                                        Approve
+                                                    </Button>
+                                                    <Button type="button" variant="outline" disabled={isAdvancing} onClick={() => handleReviewDecision('deny')}>
+                                                        Deny
+                                                    </Button>
+                                                </>
+                                        ) : null}
+                                        {!activeAction && activeProposal.completed_at ? (
+                                            <span className="text-sm font-medium text-muted-foreground">Workflow complete</span>
+                                        ) : null}
+                                        {!activeAction && !activeProposal.completed_at && proposalPhases.length > 0 ? (
+                                            <span className="text-sm font-medium text-muted-foreground">No actions configured for this phase</span>
+                                        ) : null}
+                                    </div>
+                                </section>
+                            </div>
+                        </section>
+                    ) : proposals.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center rounded-lg border border-border bg-card py-16 text-center">
+                            <div className="mb-4 flex size-12 items-center justify-center rounded-full bg-primary/10">
+                                <ClipboardList className="size-6 text-primary" />
+                            </div>
+                            <h3 className="mb-1 text-lg font-semibold">No proposals found</h3>
+                            <p className="mb-4 max-w-sm text-sm text-muted-foreground">
+                                You don't have any proposals yet. Get started by creating your first proposal.
+                            </p>
+                            <Button onClick={() => setIsCreateModalOpen(true)}>Create Proposal</Button>
+                        </div>
+                    ) : null}
+                </div>
+            </div>
+
+            <Dialog open={isSwitchProposalModalOpen} onOpenChange={setIsSwitchProposalModalOpen}>
+                <DialogContent className="flex max-h-[85vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
+                    <DialogHeader className="border-b border-border px-6 py-5 pr-12">
+                        <DialogTitle>Switch proposal</DialogTitle>
+                        <DialogDescription>
+                            Choose a proposal to view its workflow and activity.
+                            <span className="ml-1">
+                                {proposals.length} {proposals.length === 1 ? 'proposal' : 'proposals'}
+                            </span>
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="custom-scrollbar min-h-0 overflow-y-auto p-6">
+                        <div className="space-y-3">
+                            {proposals.map((proposal) => {
+                                const phaseName = proposal.current_phase?.name ?? 'Not started';
+                                const isActive = proposal.id === activeProposalId;
+
+                                return (
+                                    <button
+                                        key={proposal.id}
+                                        type="button"
+                                        aria-pressed={isActive}
+                                        onClick={() => {
+                                            setActiveProposalId(proposal.id);
+                                            setIsSwitchProposalModalOpen(false);
+                                        }}
+                                        className={`flex w-full flex-col gap-5 rounded-lg border p-4 text-left transition-colors hover:border-primary/50 hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:flex-row sm:items-start sm:justify-between sm:gap-8 ${
+                                            isActive ? 'border-primary bg-primary/5 ring-1 ring-primary/20' : 'border-border bg-card'
+                                        }`}
+                                    >
+                                            <div className="min-w-0 flex-1">
+                                                <div className="flex items-start gap-2">
+                                                    <div className="min-w-0">
+                                                        <p className="line-clamp-2 font-semibold leading-snug">{proposal.title}</p>
+                                                        <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                                                            {proposal.process?.name ?? 'No workflow process assigned'}
+                                                        </p>
+                                                    </div>
+                                                    {isActive ? (
+                                                        <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                                                            <Check className="size-3" />
+                                                        </span>
+                                                    ) : null}
+                                                </div>
+                                                <Badge variant="secondary" className="mt-3 font-mono">
+                                                    #{proposal.id}
+                                                </Badge>
+                                            </div>
+
+                                            <div className="shrink-0 space-y-3 sm:w-40">
+                                                <div>
+                                                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                                        Status
+                                                    </p>
+                                                    <Badge variant="outline" className="mt-1.5">
+                                                        <ClipboardList />
+                                                        {phaseName}
+                                                    </Badge>
+                                                </div>
+                                                <p className="text-xs text-muted-foreground">
+                                                    Created{' '}
+                                                    <time dateTime={proposal.created_at}>
+                                                        {new Date(proposal.created_at).toLocaleDateString()}
+                                                    </time>
+                                                </p>
+                                            </div>
+                                        </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
                 <DialogContent>

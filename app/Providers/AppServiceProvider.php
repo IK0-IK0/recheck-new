@@ -2,9 +2,11 @@
 
 namespace App\Providers;
 
+use App\Auth\DualTableUserProvider;
 use App\Storage\SupabaseStorageAdapter;
 use Carbon\CarbonImmutable;
 use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\ServiceProvider;
@@ -28,6 +30,17 @@ class AppServiceProvider extends ServiceProvider
     {
         $this->configureDefaults();
         $this->registerSupabaseStorageDriver();
+        $this->registerDualTableAuthProvider();
+    }
+
+    /**
+     * Register custom authentication provider that checks both users and tenant_users tables.
+     */
+    protected function registerDualTableAuthProvider(): void
+    {
+        Auth::provider('dual-table', function ($app, array $config) {
+            return new DualTableUserProvider($app['hash'], $config['model']);
+        });
     }
 
     /**

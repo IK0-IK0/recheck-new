@@ -3,12 +3,16 @@ import { cn } from '@/lib/utils';
 
 export default function SettingsTabs() {
     const { url, props } = usePage();
-    const isAdmin = (props.auth as { user?: { role?: string } } | undefined)?.user?.role === 'admin';
+    const auth = props.auth as { user?: { role?: string }; isTenantUser?: boolean } | undefined;
+    const isAdmin = auth?.user?.role === 'admin';
+    const isTenantUser = auth?.isTenantUser ?? false;
 
     const tabs = [
         { name: isAdmin ? 'User' : 'Institution', href: isAdmin ? '/settings/profile' : '/settings/institution', current: isAdmin ? url.startsWith('/settings/profile') : url.startsWith('/settings/institution') },
-        { name: 'Database', href: '/settings/database', current: url.startsWith('/settings/database') },
-        { name: 'Storage', href: '/settings/storage', current: url.startsWith('/settings/storage') },
+        ...(!isTenantUser ? [
+            { name: 'Database', href: '/settings/database', current: url.startsWith('/settings/database') },
+            { name: 'Storage', href: '/settings/storage', current: url.startsWith('/settings/storage') },
+        ] : []),
         ...(isAdmin ? [{ name: 'Documents', href: '/settings/api', current: url.startsWith('/settings/api') }] : []),
         { name: 'Security', href: '/settings/security', current: url.startsWith('/settings/security') },
         ...(!isAdmin ? [

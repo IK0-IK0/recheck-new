@@ -19,10 +19,15 @@ class StorageConfig extends Model
         $isAdmin = $user?->role === 'admin';
         $model = $isAdmin ? self::class : TenantStorageConfig::class;
         $query = $model::on(config('database.default'));
+        $institutionId = $user?->getInstitutionId();
 
-        return $isAdmin
-            ? $query
-            : $query->where('tenant_id', $user?->getKey());
+        if ($isAdmin) {
+            return $query;
+        }
+
+        return $institutionId === null
+            ? $query->whereRaw('1 = 0')
+            : $query->where('tenant_id', $institutionId);
     }
 
     protected $fillable = [

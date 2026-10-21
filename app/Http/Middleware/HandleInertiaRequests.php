@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Models\StorageConfig;
+use App\Models\SuperadminTenantUser;
 use App\Models\TenantDatabaseConfig;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Config;
@@ -87,6 +88,7 @@ class HandleInertiaRequests extends Middleware
             'name' => config('app.name'),
             'auth' => [
                 'user' => $user,
+                'isTenantUser' => $user instanceof SuperadminTenantUser,
                 'roles' => $roles,
                 'permissions' => $permissions,
             ],

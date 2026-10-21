@@ -3,7 +3,9 @@
 namespace App\Http\Controllers\Settings;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Settings\ProfileUpdateRequest;
 use App\Models\DatabaseConfig;
+use App\Models\SuperadminTenantUser;
 use App\Models\TenantDatabaseConfig;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -29,6 +31,10 @@ class SetupController extends Controller
             ]);
         }
 
+        $user = $request->user();
+        $institution = $user instanceof SuperadminTenantUser ? $user->institution : $user;
+        abort_unless($institution && $institution->role === 'institution', 403);
+
         $activeConfig = TenantDatabaseConfig::activeForCurrentUser();
 
         // Determine which view to render based on the route
@@ -38,31 +44,44 @@ class SetupController extends Controller
         }
 
         return Inertia::render($view, [
-            'institutionName' => $request->user()->name,
-            'institutionEmail' => $request->user()->email,
-            'themeColor' => $request->user()->theme_color ?? 'zinc',
+            'institutionName' => $institution->name,
+            'institutionEmail' => $institution->email,
+            'themeColor' => $institution->theme_color ?? 'zinc',
+            'canEditTheme' => ! ($user instanceof SuperadminTenantUser),
             'currentConfig' => $activeConfig,
             'migrationStatus' => $this->getMigrationStatus(),
         ]);
     }
 
     /**
-     * Update the institution name and theme color.
+     * Update institution details without changing the institution theme.
      */
     public function update(Request $request): RedirectResponse
     {
-        $validated = $request->validate([
+        $rules = [
             'institution_name' => ['required', 'string', 'max:255'],
             'institution_email' => ['nullable', 'string', 'email', 'max:255'],
-            'theme_color' => ['nullable', 'string', 'max:50'],
-        ]);
+        ];
 
         $user = $request->user();
+        $canEditTheme = ! ($user instanceof SuperadminTenantUser);
+        if ($canEditTheme) {
+            $rules['theme_color'] = ['required', 'string', Rule::in(ProfileUpdateRequest::THEME_COLORS)];
+        }
 
-        $user->fill([
+        $validated = $request->validate($rules);
+        $institution = $user instanceof SuperadminTenantUser ? $user->institution : $user;
+        abort_unless($institution && $institution->role === 'institution', 403);
+
+        $institutionData = [
             'name' => $validated['institution_name'],
-            'theme_color' => $validated['theme_color'],
-        ])->save();
+            'email' => $validated['institution_email'] ?? null,
+        ];
+        if ($canEditTheme) {
+            $institutionData['theme_color'] = $validated['theme_color'];
+        }
+
+        $institution->fill($institutionData)->save();
 
         return back();
     }
@@ -84,16 +103,18 @@ class SetupController extends Controller
 
         $isAdmin = $request->user()->role === 'admin';
         $configModel = $isAdmin ? DatabaseConfig::class : TenantDatabaseConfig::class;
+        $institutionId = $isAdmin ? null : $request->user()->getInstitutionId();
+        abort_unless($isAdmin || $institutionId !== null, 403);
 
         $configQuery = $configModel::query();
         if (! $isAdmin) {
-            $configQuery->where('tenant_id', $request->user()->getKey());
+            $configQuery->where('tenant_id', $institutionId);
         }
         $configQuery->update(['is_active' => false]);
 
         // Create new active config
         $config = $configModel::create([
-            'tenant_id' => $isAdmin ? null : $request->user()->getKey(),
+            'tenant_id' => $institutionId,
             'driver' => $validated['driver'],
             'host' => $validated['host'] ?? null,
             'port' => $validated['port'] ?? null,

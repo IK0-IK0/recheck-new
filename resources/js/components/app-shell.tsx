@@ -1,8 +1,8 @@
 import { usePage } from '@inertiajs/react';
 import type { ReactNode } from 'react';
 import { useEffect } from 'react';
-import { SidebarProvider } from '@/components/ui/sidebar';
 import Silk from '@/components/Silk';
+import { SidebarProvider } from '@/components/ui/sidebar';
 import { applyUserTheme } from '@/hooks/use-appearance';
 import type { AppVariant } from '@/types';
 
@@ -28,8 +28,10 @@ type Props = {
 };
 
 export function AppShell({ children, variant = 'sidebar' }: Props) {
-    const { auth, sidebarOpen: isOpen } = usePage<{ auth?: { user?: { theme_color?: string | null } }; sidebarOpen?: boolean }>().props;
+    const page = usePage<{ auth?: { user?: { theme_color?: string | null } }; sidebarOpen?: boolean }>();
+    const { auth, sidebarOpen: isOpen } = page.props;
     const silkColor = THEME_COLORS[auth?.user?.theme_color ?? 'zinc'] ?? THEME_COLORS.zinc;
+    const isProposalsIndex = page.url.split('?')[0] === '/tenant/proposals';
 
     useEffect(() => {
         applyUserTheme(auth?.user?.theme_color);
@@ -52,7 +54,7 @@ export function AppShell({ children, variant = 'sidebar' }: Props) {
     }
 
     return (
-        <div className="relative min-h-screen overflow-hidden bg-[#27272a]">
+        <div className={`relative bg-[#27272a] ${isProposalsIndex ? 'min-h-svh overflow-x-hidden lg:h-svh lg:overflow-hidden' : 'min-h-screen overflow-hidden'}`}>
             <Silk
                 speed={0.1}
                 scale={0.35}
@@ -61,8 +63,13 @@ export function AppShell({ children, variant = 'sidebar' }: Props) {
                 rotation={0}
                 className="pointer-events-none absolute inset-0 z-0"
             />
-            <div className="relative z-10 min-h-screen">
-                <SidebarProvider defaultOpen={isOpen}>{children}</SidebarProvider>
+            <div className={`relative z-10 ${isProposalsIndex ? 'min-h-svh lg:h-full lg:min-h-0' : 'min-h-screen'}`}>
+                <SidebarProvider
+                    defaultOpen={isOpen}
+                    className={isProposalsIndex ? 'lg:h-full lg:min-h-0 lg:overflow-hidden' : undefined}
+                >
+                    {children}
+                </SidebarProvider>
             </div>
         </div>
     );

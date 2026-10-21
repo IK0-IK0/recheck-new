@@ -17,6 +17,11 @@ use Illuminate\Support\Carbon;
  * @property string $action_type
  * @property bool $requires_file
  * @property int $order
+ * @property int|null $approve_action_id
+ * @property int|null $deny_action_id
+ * @property string $decision_mode
+ * @property array<int, array{id: string, label: string, destination: string}>|null $custom_decision_branches
+ * @property array<int, array{id: string, name: string, role_ids: array<int, int>, document_ids: array<int, int>}>|null $reviewer_groups
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  */
@@ -43,7 +48,25 @@ class Action extends Model
         'action_type',
         'requires_file',
         'order',
+        'approve_action_id',
+        'deny_action_id',
+        'decision_mode',
+        'custom_decision_branches',
+        'reviewer_groups',
     ];
+
+    /**
+     * Get the model's attribute casts.
+     *
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'custom_decision_branches' => 'array',
+            'reviewer_groups' => 'array',
+        ];
+    }
 
     /**
      * The phase that owns this action.
