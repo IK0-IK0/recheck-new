@@ -13,6 +13,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 function proposalRequestAsOwner(Request $request, int $ownerId = 1): Request
@@ -86,6 +87,27 @@ test('proposal details redirect into the proposals page with that proposal selec
 
     expect($response->getTargetUrl())
         ->toContain('/tenant/proposals?proposal='.$proposal->id);
+});
+
+test('users can create at most three proposals including completed proposals', function () {
+    foreach (range(1, 3) as $number) {
+        Proposal::create([
+            'title' => 'Proposal '.$number,
+            'user_id' => 1,
+            'user_type' => User::class,
+            'institution_id' => 1,
+            'completed_at' => $number === 1 ? now() : null,
+        ]);
+    }
+
+    $request = proposalRequestAsOwner(
+        Request::create('/tenant/proposals', 'POST', ['title' => 'Fourth proposal']),
+    );
+
+    expect(fn () => app(ProposalController::class)->store($request))
+        ->toThrow(ValidationException::class);
+    expect(Proposal::query()->where('user_id', 1)->where('user_type', User::class)->count())
+        ->toBe(3);
 });
 
 test('submitting completes one configured action at a time before moving phases', function () {
@@ -194,7 +216,10 @@ test('uploaded proposal documents persist their required phase and document', fu
     $process = Process::factory()->create();
     $phase = Phase::factory()->for($process)->create();
     $action = Action::factory()->for($phase)->create();
-    $requiredDocument = Document::factory()->create();
+    $requiredDocument = Document::factory()->create([
+        'label' => 'form',
+        'file_type' => 'application/pdf',
+    ]);
     $action->documents()->attach($requiredDocument);
     $proposal = Proposal::create([
         'title' => 'Research proposal',
@@ -211,7 +236,6 @@ test('uploaded proposal documents persist their required phase and document', fu
             'POST',
             [
                 'name' => 'Completed application form',
-                'label' => 'form',
                 'phase_id' => $phase->id,
                 'required_document_id' => $requiredDocument->id,
                 'action_id' => $action->id,
@@ -226,10 +250,54 @@ test('uploaded proposal documents persist their required phase and document', fu
     $uploadedDocument = $proposal->documents()->firstOrFail();
 
     expect($uploadedDocument->name)->toBe('Completed application form')
+        ->and($uploadedDocument->label)->toBe('form')
         ->and((int) $uploadedDocument->pivot->phase_id)->toBe($phase->id)
         ->and((int) $uploadedDocument->pivot->required_document_id)->toBe($requiredDocument->id)
         ->and((int) $uploadedDocument->pivot->action_id)->toBe($action->id)
         ->and(Storage::disk('local')->allFiles('proposals/'.$proposal->id.'/documents'))->toHaveCount(1);
+});
+
+test('proposal upload derives document type and rejects files that do not match the required type', function () {
+    Storage::fake('local');
+
+    $process = Process::factory()->create();
+    $phase = Phase::factory()->for($process)->create();
+    $action = Action::factory()->for($phase)->create();
+    $requiredDocument = Document::factory()->create([
+        'label' => 'form',
+        'file_type' => 'application/pdf',
+    ]);
+    $action->documents()->attach($requiredDocument);
+    $proposal = Proposal::create([
+        'title' => 'Research proposal',
+        'user_id' => 1,
+        'user_type' => User::class,
+        'institution_id' => 1,
+        'process_id' => $process->id,
+        'current_phase_id' => $phase->id,
+        'current_action_id' => $action->id,
+    ]);
+    $request = proposalRequestAsOwner(
+        Request::create(
+            '/tenant/proposals/'.$proposal->id.'/documents',
+            'POST',
+            [
+                'name' => 'Wrong file type',
+                'label' => 'doc',
+                'phase_id' => $phase->id,
+                'required_document_id' => $requiredDocument->id,
+                'action_id' => $action->id,
+            ],
+            [],
+            ['file' => UploadedFile::fake()->create('application.txt', 20, 'text/plain')],
+        ),
+    );
+
+    app(ProposalController::class)->storeDocument($request, $proposal);
+
+    expect($proposal->documents()->exists())->toBeFalse()
+        ->and(Document::query()->where('name', 'Wrong file type')->exists())->toBeFalse()
+        ->and(Storage::disk('local')->allFiles('proposals/'.$proposal->id.'/documents'))->toBe([]);
 });
 
 test('proposal details can still upload a document without a phase requirement', function () {

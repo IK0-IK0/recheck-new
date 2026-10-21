@@ -3,7 +3,13 @@ import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import {
     Dialog,
     DialogClose,
@@ -22,12 +28,13 @@ export default function DocumentUploadModal({
     trigger,
     submitLabel = 'Save',
     initialValues = { name: '', label: 'form' },
+    showType = true,
     onSubmit,
     uploadProgress = null,
 }) {
     const [open, setOpen] = useState(false);
     const [values, setValues] = useState(initialValues);
-    const [errors, setErrors] = useState({ name: '', label: '' });
+    const [errors, setErrors] = useState({ name: '', label: '', file: '' });
     const [processing, setProcessing] = useState(false);
     const [selectedFiles, setSelectedFiles] = useState([]);
 
@@ -37,7 +44,7 @@ export default function DocumentUploadModal({
         }
 
         setValues({ ...initialValues });
-        setErrors({ name: '', label: '' });
+        setErrors({ name: '', label: '', file: '' });
         setSelectedFiles([]);
     }, [open]);
 
@@ -48,6 +55,7 @@ export default function DocumentUploadModal({
             setErrors({
                 name: 'Document name is required.',
                 label: '',
+                file: '',
             });
             return;
         }
@@ -55,7 +63,8 @@ export default function DocumentUploadModal({
         if (selectedFiles.length === 0) {
             setErrors({
                 name: '',
-                label: 'Please select a file.',
+                label: '',
+                file: 'Please select a file.',
             });
             return;
         }
@@ -63,7 +72,10 @@ export default function DocumentUploadModal({
         setProcessing(true);
 
         try {
-            const submitted = await onSubmit?.({ ...values, files: selectedFiles });
+            const submitted = await onSubmit?.({
+                ...values,
+                files: selectedFiles,
+            });
 
             if (submitted !== false) {
                 setOpen(false);
@@ -83,34 +95,66 @@ export default function DocumentUploadModal({
                     <DialogTitle>{title}</DialogTitle>
                     <DialogDescription>{description}</DialogDescription>
                 </DialogHeader>
-                <form className="space-y-4 overflow-hidden" onSubmit={handleSubmit}>
+                <form
+                    className="space-y-4 overflow-hidden"
+                    onSubmit={handleSubmit}
+                >
                     <div className="grid gap-2">
                         <Label htmlFor="document-name">Document name</Label>
                         <Input
                             id="document-name"
                             value={values.name}
-                            onChange={(event) => setValues({ ...values, name: event.target.value })}
+                            onChange={(event) =>
+                                setValues({
+                                    ...values,
+                                    name: event.target.value,
+                                })
+                            }
                             placeholder="e.g. Client intake form"
                         />
-                        {errors.name ? <p className="text-sm text-destructive">{errors.name}</p> : null}
+                        {errors.name ? (
+                            <p className="text-sm text-destructive">
+                                {errors.name}
+                            </p>
+                        ) : null}
                     </div>
-                    <div className="grid gap-2">
-                        <Label htmlFor="document-label">Document type</Label>
-                        <Select value={values.label} onValueChange={(label) => setValues({ ...values, label })}>
-                            <SelectTrigger id="document-label" className="w-full">
-                                <SelectValue placeholder="Select a document type" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="form">Form</SelectItem>
-                                <SelectItem value="doc">Document</SelectItem>
-                            </SelectContent>
-                        </Select>
-                        {errors.label ? <p className="text-sm text-destructive">{errors.label}</p> : null}
-                    </div>
-                    
+                    {showType ? (
+                        <div className="grid gap-2">
+                            <Label htmlFor="document-label">
+                                Document type
+                            </Label>
+                            <Select
+                                value={values.label}
+                                onValueChange={(label) =>
+                                    setValues({ ...values, label })
+                                }
+                            >
+                                <SelectTrigger
+                                    id="document-label"
+                                    className="w-full"
+                                >
+                                    <SelectValue placeholder="Select a document type" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="form">Form</SelectItem>
+                                    <SelectItem value="doc">
+                                        Document
+                                    </SelectItem>
+                                </SelectContent>
+                            </Select>
+                            {errors.label ? (
+                                <p className="text-sm text-destructive">
+                                    {errors.label}
+                                </p>
+                            ) : null}
+                        </div>
+                    ) : null}
+
                     {/* File Drop Zone */}
-                    <div className="grid gap-2 w-full overflow-hidden">
-                        {selectedFiles.length === 0 && <Label>Upload file</Label>}
+                    <div className="grid w-full gap-2 overflow-hidden">
+                        {selectedFiles.length === 0 && (
+                            <Label>Upload file</Label>
+                        )}
                         <FileDropZone
                             onFilesSelected={setSelectedFiles}
                             accept=".pdf,.doc,.docx,.txt,.xlsx,.xls,.csv"
@@ -118,15 +162,35 @@ export default function DocumentUploadModal({
                             multiple={false}
                             className="w-full"
                         />
+                        {errors.file ? (
+                            <p className="text-sm text-destructive">
+                                {errors.file}
+                            </p>
+                        ) : null}
                     </div>
 
                     <DialogFooter>
                         {processing && uploadProgress !== null ? (
-                            <div className="flex min-w-0 flex-1 items-center gap-2" aria-live="polite">
-                                <div className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="File upload progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow={uploadProgress}>
-                                    <div className="h-full bg-primary transition-[width]" style={{ width: `${uploadProgress}%` }} />
+                            <div
+                                className="flex min-w-0 flex-1 items-center gap-2"
+                                aria-live="polite"
+                            >
+                                <div
+                                    className="h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"
+                                    role="progressbar"
+                                    aria-label="File upload progress"
+                                    aria-valuemin="0"
+                                    aria-valuemax="100"
+                                    aria-valuenow={uploadProgress}
+                                >
+                                    <div
+                                        className="h-full bg-primary transition-[width]"
+                                        style={{ width: `${uploadProgress}%` }}
+                                    />
                                 </div>
-                                <span className="shrink-0 text-xs text-muted-foreground">{uploadProgress}%</span>
+                                <span className="shrink-0 text-xs text-muted-foreground">
+                                    {uploadProgress}%
+                                </span>
                             </div>
                         ) : null}
                         <DialogClose asChild>
@@ -134,13 +198,19 @@ export default function DocumentUploadModal({
                                 Cancel
                             </Button>
                         </DialogClose>
-                        <Button type="submit" disabled={processing} aria-busy={processing}>
+                        <Button
+                            type="submit"
+                            disabled={processing}
+                            aria-busy={processing}
+                        >
                             {processing ? (
                                 <>
                                     <Spinner />
                                     Uploading...
                                 </>
-                            ) : submitLabel}
+                            ) : (
+                                submitLabel
+                            )}
                         </Button>
                     </DialogFooter>
                 </form>

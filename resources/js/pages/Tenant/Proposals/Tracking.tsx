@@ -1,7 +1,6 @@
 import { Link } from '@inertiajs/react';
-import { Check, Eye, FileStack, FileText, Search, X } from 'lucide-react';
+import { Activity, Check, Eye, FileText, Search, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import ProposalTestingToggle from '@/components/ProposalTestingToggle';
 import PhasePipeline from '@/components/PhasePipeline';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -147,14 +146,13 @@ export default function Tracking({ proposals, viewerId, viewerType }: Props) {
             <header className="-mx-6 -mt-6 mb-0 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-surface px-6 py-3">
                 <div className="flex items-center gap-3">
                     <div className="flex size-10 items-center justify-center rounded-lg bg-primary/10">
-                        <FileStack className="size-5 text-primary" />
+                        <Activity className="size-5 text-primary" />
                     </div>
                     <div>
                         <h1 className="text-lg font-semibold">Tracking</h1>
                         <p className="text-xs text-muted-foreground">Review proposals by workflow phase.</p>
                     </div>
                 </div>
-                <ProposalTestingToggle />
             </header>
 
             <div className="shrink-0 overflow-hidden rounded-lg border border-border bg-card">

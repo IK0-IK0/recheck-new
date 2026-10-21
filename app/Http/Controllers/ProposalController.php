@@ -93,7 +93,22 @@ class ProposalController extends Controller
         abort_if($institutionId === null, 403);
 
         $validated = $request->validate([
-            'title' => ['required', 'string', 'max:255'],
+            'title' => [
+                'required',
+                'string',
+                'max:255',
+                function (string $attribute, mixed $value, \Closure $fail) use ($request, $institutionId): void {
+                    $proposalCount = Proposal::query()
+                        ->where('institution_id', $institutionId)
+                        ->where('user_id', $request->user()->getKey())
+                        ->where('user_type', $request->user()::class)
+                        ->count();
+
+                    if ($proposalCount >= 3) {
+                        $fail('You can create up to 3 proposals.');
+                    }
+                },
+            ],
         ]);
 
         $proposal = Proposal::create([
@@ -228,6 +243,16 @@ class ProposalController extends Controller
 
             if (! $documentIsRequiredForPhase) {
                 return redirect()->back()->withErrors(['required_document_id' => 'The selected document is not required for this phase.']);
+            }
+
+            $requiredDocument = Document::query()->findOrFail($requiredDocumentId);
+            $label = $requiredDocument->label;
+
+            if (str_contains($requiredDocument->file_type, '/')
+                && strtolower($requiredDocument->file_type) !== strtolower($uploadedFile->getMimeType() ?? '')) {
+                return redirect()->back()->withErrors([
+                    'file' => "Upload a {$requiredDocument->file_type} file to match the required document.",
+                ]);
             }
 
             if ($actionId !== null) {
@@ -590,7 +615,7 @@ class ProposalController extends Controller
         ]));
 
         if ($roleIds === []) {
-            return false;
+            return true;
         }
 
         return DB::connection('tenant')->table('role_user')

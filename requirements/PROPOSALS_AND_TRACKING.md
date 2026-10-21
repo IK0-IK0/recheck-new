@@ -20,18 +20,18 @@ The Proposals page loads proposals with their assigned process, process phases a
 
 ### Creating a proposal
 
-1. Select **New Proposal** or **Create Proposal**.
+1. Select **New Proposal** or **Create Proposal**. Each user can create up to three proposals total, including completed proposals.
 2. Enter a title and submit the form.
 3. The server validates the title as required text with a maximum length of 255 characters, creates the proposal for the signed-in user, and assigns the first available process when one exists.
 4. On success, the user is taken to the Proposals page with the new proposal selected.
 
 ### Reviewing a proposal
 
-The page selects the requested proposal when opened after creation or from a details link; otherwise, it initially selects the first proposal returned by the server. Use **Switch proposal** to select another proposal and see its title, ID, process, persisted status, creation date, phase pipeline, history, and action panel.
+The page selects the requested proposal when opened after creation or from a details link; otherwise, it initially selects the first active proposal, or the newest proposal if all are complete. Use **Switch proposal** to select another proposal. The switcher separates in-progress proposals under **Active** from completed proposals under **Archived**. It shows each proposal's title, ID, process, persisted status, creation date, phase pipeline, history, and action panel. The create button is disabled after the user's third proposal, and the server enforces the same limit.
 
 The phase pipeline is built from the phases assigned to the proposal's process. Earlier phases can be selected to inspect their required documents and uploaded files; later phases are not selectable from this view. The action panel displays the current configured action and its required documents. **Submit** completes a submit action and follows the next configured action; it moves to another phase only when the action flow routes there. Review actions wait for an assigned reviewer to choose an approve/deny or custom outcome. Those outcomes follow their configured routes, and action and phase transitions are persisted in the tenant database.
 
-Required files can be uploaded from the action panel. The server accepts an uploaded file up to 10 MB and an optional `form` or `doc` label, saves it using the active storage configuration, and attaches its document record to the proposal together with its workflow phase, action, and required-document association. A submit action cannot be completed until its required files are uploaded. Uploaded-file status is derived from these saved records. Upload and storage validation errors are shown to the user.
+Required files can be uploaded from the action panel. The upload type is inherited from the configured required document rather than selected by the proposer. When the required document specifies a MIME type, the uploaded file must match it. The server accepts files up to 10 MB, saves them using the active storage configuration, and attaches each document to the proposal together with its workflow phase, action, and required-document association. A submit action cannot be completed until its required files are uploaded. Uploaded-file status is derived from these saved records. Upload and storage validation errors are shown to the user.
 
 ## Tracking page
 
@@ -56,8 +56,8 @@ Existing tenant databases must run pending tenant migrations before deploying co
 | Operation | Server behavior |
 |---|---|
 | List proposals | Loads proposals, newest first, with workflow phases, current phase/action, action and phase history, and attached documents |
-| Create proposal | Validates title, records the signed-in user, optionally assigns the first available process and its first configured action |
-| Upload proposal document | Validates the file, label, and any supplied phase/required-document association; stores the file, creates a document record, and attaches it to the proposal |
+| Create proposal | Validates title and enforces a maximum of three proposals for the signed-in user and institution, including completed proposals; optionally assigns the first available process and its first configured action |
+| Upload proposal document | Validates the file and any supplied phase/required-document association, derives the document label from its configured required document, and checks its MIME type when configured; stores the file, creates a document record, and attaches it to the proposal |
 | Delete proposal document | Detaches the document; deletes its file and record only when it is no longer attached to proposals or actions |
 | Submit proposal action | Completes the current submit action, validates its required files, follows its configured action/phase route, and records the action transition |
 | Review proposal action | Allows an assigned reviewer to submit an approve/deny or custom outcome, follows its configured route, and records the decision |

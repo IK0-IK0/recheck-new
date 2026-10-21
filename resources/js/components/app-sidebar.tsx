@@ -1,5 +1,6 @@
 import { Link, usePage } from '@inertiajs/react';
 import {
+    Activity,
     BookOpen,
     CheckCircle2,
     FileText,
@@ -19,7 +20,6 @@ import { NavFooter } from '@/components/nav-footer';
 import { NavUser } from '@/components/nav-user';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { useProposalTestingLinks } from '@/hooks/use-proposal-testing-links';
 import {
     Sidebar,
     SidebarContent,
@@ -29,6 +29,7 @@ import {
     SidebarMenuButton,
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
+import { useProposalTestingLinks } from '@/hooks/use-proposal-testing-links';
 import { dashboard } from '@/routes';
 import type { NavItem } from '@/types';
 
@@ -46,7 +47,7 @@ const mainNavItems: NavItem[] = [
     {
         title: 'Tracking',
         href: '/tenant/proposals?view=tracking',
-        icon: FolderKanban,
+        icon: Activity,
     },
     {
         title: 'Processes',
