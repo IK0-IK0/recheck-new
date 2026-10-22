@@ -6,14 +6,19 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Carbon;
 
 /**
  * @property int $id
  * @property string $title
  * @property int $user_id
+ * @property string $user_type
+ * @property int|null $institution_id
  * @property int|null $process_id
  * @property int|null $current_phase_id
+ * @property int|null $current_action_id
+ * @property Carbon|null $completed_at
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  */
@@ -36,9 +41,25 @@ class Proposal extends Model
     protected $fillable = [
         'title',
         'user_id',
+        'user_type',
+        'institution_id',
         'process_id',
         'current_phase_id',
+        'current_action_id',
+        'completed_at',
     ];
+
+    /**
+     * Get the model's attribute casts.
+     *
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'completed_at' => 'datetime',
+        ];
+    }
 
     /**
      * The user who submitted the proposal.
@@ -78,6 +99,37 @@ class Proposal extends Model
      */
     public function documents(): BelongsToMany
     {
-        return $this->belongsToMany(Document::class, 'proposal_documents', 'proposal_id', 'document_id');
+        return $this->belongsToMany(Document::class, 'proposal_documents', 'proposal_id', 'document_id')
+            ->withPivot(['phase_id', 'required_document_id', 'action_id']);
+    }
+
+    /**
+     * The workflow phase transitions recorded for the proposal.
+     *
+     * @return HasMany<ProposalPhaseTransition, $this>
+     */
+    public function phaseTransitions(): HasMany
+    {
+        return $this->hasMany(ProposalPhaseTransition::class);
+    }
+
+    /**
+     * The action currently awaiting completion.
+     *
+     * @return BelongsTo<Action, $this>
+     */
+    public function currentAction(): BelongsTo
+    {
+        return $this->belongsTo(Action::class, 'current_action_id');
+    }
+
+    /**
+     * The workflow actions already completed for this proposal.
+     *
+     * @return HasMany<ProposalActionTransition, $this>
+     */
+    public function actionTransitions(): HasMany
+    {
+        return $this->hasMany(ProposalActionTransition::class);
     }
 }

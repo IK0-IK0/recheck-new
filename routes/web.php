@@ -20,7 +20,7 @@ Route::middleware(['auth', 'verified'])->group(function (): void {
     });
 
     // Tenant-scoped management area for all authenticated users.
-    Route::prefix('tenant')->middleware('tenant.setup')->group(function (): void {
+    Route::prefix('tenant')->middleware(['tenant.user.limited', 'tenant.setup'])->group(function (): void {
         Route::controller(ProcessManagementController::class)->group(function (): void {
             Route::get('/processes', 'index')->name('tenant.processes.index');
             Route::post('/processes', 'storeProcess')->name('tenant.processes.store');
@@ -54,9 +54,10 @@ Route::middleware(['auth', 'verified'])->group(function (): void {
             Route::post('/proposals/{proposal}/documents', 'storeDocument')->name('tenant.proposals.documents.store');
             Route::delete('/proposals/{proposal}/documents/{document}', 'destroyDocument')->name('tenant.proposals.documents.destroy');
             Route::post('/proposals/{proposal}/submit', 'submit')->name('tenant.proposals.submit');
+            Route::post('/proposals/{proposal}/review', 'review')->name('tenant.proposals.review');
         });
 
-        Route::resource('users', Admin\UserManagementController::class)->only(['index', 'update', 'destroy']);
+        Route::resource('users', Admin\UserManagementController::class)->only(['index', 'store', 'update', 'destroy']);
         Route::resource('roles', Admin\RoleManagementController::class)->only(['index', 'store', 'update', 'destroy']);
     });
 });

@@ -26,13 +26,18 @@ export default function AppSidebarLayout({
     children,
     breadcrumbs = [],
 }: AppLayoutProps) {
-    const { auth } = usePage<{ auth?: { user?: { theme_color?: string | null } } }>().props;
+    const page = usePage<{ auth?: { user?: { theme_color?: string | null } } }>();
+    const { auth } = page.props;
     const silkColor = THEME_COLORS[auth?.user?.theme_color ?? 'zinc'] ?? THEME_COLORS.zinc;
+    const isProposalsIndex = page.url.split('?')[0] === '/tenant/proposals';
 
     return (
         <AppShell variant="sidebar">
             <AppSidebar />
-            <AppContent variant="sidebar" className="relative overflow-x-hidden bg-black">
+            <AppContent
+                variant="sidebar"
+                className={`relative overflow-x-hidden bg-black ${isProposalsIndex ? 'lg:h-svh lg:min-h-0 lg:overflow-hidden' : ''}`}
+            >
                 <Silk
                     speed={5}
                     scale={0.1}

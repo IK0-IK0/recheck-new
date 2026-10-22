@@ -1,5 +1,6 @@
 import { Link, usePage } from '@inertiajs/react';
 import {
+    Activity,
     BookOpen,
     CheckCircle2,
     FileText,
@@ -28,6 +29,7 @@ import {
     SidebarMenuButton,
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
+import { useProposalTestingLinks } from '@/hooks/use-proposal-testing-links';
 import { dashboard } from '@/routes';
 import type { NavItem } from '@/types';
 
@@ -41,6 +43,11 @@ const mainNavItems: NavItem[] = [
         title: 'Proposals',
         href: '/tenant/proposals',
         icon: ClipboardList,
+    },
+    {
+        title: 'Tracking',
+        href: '/tenant/proposals?view=tracking',
+        icon: Activity,
     },
     {
         title: 'Processes',
@@ -79,17 +86,31 @@ const footerNavItems: NavItem[] = [
 
 export function AppSidebar() {
     const { auth, setupStatus } = usePage().props as {
-        auth?: { user?: { role?: string } };
+        auth?: { user?: { role?: string }; isTenantUser?: boolean };
         setupStatus?: { database: boolean; storage: boolean; complete: boolean };
     };
     const isAdmin = auth?.user?.role === 'admin';
+    const isInstitution = auth?.user?.role === 'institution';
     const [showSetupDialog, setShowSetupDialog] = useState(false);
+    const [showProposalTestingLinks] = useProposalTestingLinks();
+
+    const adminNavigationItems: NavItem[] = [
+        { title: 'Dashboard', href: dashboard(), icon: LayoutGrid },
+        { title: 'Institutions', href: '/admin', icon: Building2 },
+        ...(showProposalTestingLinks
+            ? mainNavItems.filter((item) => ['Proposals', 'Tracking'].includes(item.title))
+            : []),
+    ];
     const navigationItems = isAdmin
-        ? [
-            { title: 'Dashboard', href: dashboard(), icon: LayoutGrid },
-            { title: 'Institutions', href: '/admin', icon: Building2 },
-        ]
-        : mainNavItems;
+        ? adminNavigationItems
+        : auth?.isTenantUser
+            ? mainNavItems.filter((item) => (
+                item.title === 'Dashboard' || ['Proposals', 'Tracking'].includes(item.title)
+            ))
+            : mainNavItems.filter((item) => (
+                !['Proposals', 'Tracking'].includes(item.title)
+                || (isInstitution && showProposalTestingLinks)
+            ));
     const requiresSetup = setupStatus?.complete !== true;
 
     const openSetupDialog = () => {
@@ -120,6 +141,7 @@ export function AppSidebar() {
                                     onClick={openSetupDialog}
                                     tooltip={{ children: item.title }}
                                     className="text-muted-foreground/50 hover:text-muted-foreground/70"
+                                    disabled
                                 >
                                     {item.icon && <item.icon />}
                                     <span>{item.title}</span>
@@ -150,9 +172,9 @@ export function AppSidebar() {
                                 <Settings2 className="size-5 text-primary" />
                             </div>
                             <div className="space-y-1">
-                                <DialogTitle className="text-base">Finish workspace setup</DialogTitle>
+                                <DialogTitle className="text-base">Workspace setup required</DialogTitle>
                                 <DialogDescription className="text-xs leading-relaxed">
-                                    Connect both services to unlock your workspace tools.
+                                    Your workspace administrator needs to complete the setup before you can access these features.
                                 </DialogDescription>
                             </div>
                         </div>
@@ -168,7 +190,7 @@ export function AppSidebar() {
                                 </div>
                             </div>
                             {setupStatus?.database && <span className="text-xs font-medium text-emerald-600">Ready</span>}
-                            {!setupStatus?.database && <Button variant="outline" size="sm" asChild><Link href="/settings/database" onClick={() => setShowSetupDialog(false)}>Configure</Link></Button>}
+                            {!setupStatus?.database && <span className="text-xs font-medium text-amber-600">Pending</span>}
                         </div>
                         <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-background px-3 py-3">
                             <div className="flex items-center gap-3">
@@ -179,12 +201,12 @@ export function AppSidebar() {
                                 </div>
                             </div>
                             {setupStatus?.storage && <span className="text-xs font-medium text-emerald-600">Ready</span>}
-                            {!setupStatus?.storage && <Button size="sm" asChild><Link href="/settings/storage" onClick={() => setShowSetupDialog(false)}>Configure</Link></Button>}
+                            {!setupStatus?.storage && <span className="text-xs font-medium text-amber-600">Pending</span>}
                         </div>
                     </div>
 
                     <DialogFooter className="border-t border-border bg-surface px-6 py-4 sm:justify-between">
-                        <Button type="button" variant="ghost" onClick={() => setShowSetupDialog(false)}>Cancel</Button>
+                        <Button type="button" variant="ghost" onClick={() => setShowSetupDialog(false)}>Close</Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

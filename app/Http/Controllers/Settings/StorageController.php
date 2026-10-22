@@ -66,10 +66,12 @@ class StorageController extends Controller
 
         // Deactivate all existing configs
         $this->storageQuery()->update(['is_active' => false]);
+        $institutionId = $request->user()?->getInstitutionId();
+        abort_unless($request->user()?->role === 'admin' || $institutionId !== null, 403);
 
         // Create new active config
         $config = $this->storageQuery()->create([
-            'tenant_id' => $request->user()?->role === 'admin' ? null : $request->user()?->getKey(),
+            'tenant_id' => $request->user()?->role === 'admin' ? null : $institutionId,
             'driver' => $validated['driver'],
             'root' => $validated['root'] ?? null,
             'endpoint' => $validated['endpoint'] ?? null,

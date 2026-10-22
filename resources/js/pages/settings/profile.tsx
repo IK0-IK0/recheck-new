@@ -1,6 +1,6 @@
 import { Form, Head, usePage } from '@inertiajs/react';
 import { Link } from '@inertiajs/react';
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import ProfileController from '@/actions/App/Http/Controllers/Settings/ProfileController';
 import SecurityController from '@/actions/App/Http/Controllers/Settings/SecurityController';
 import DeleteUser from '@/components/delete-user';
@@ -9,29 +9,11 @@ import PasswordInput from '@/components/password-input';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { THEME_COLORS } from '@/constants/workflowConstants';
-import { cn } from '@/lib/utils';
 import { send } from '@/routes/verification';
 import type { Auth } from '@/types';
 
 type PageProps = {
     auth: Auth;
-};
-
-const THEME_COLOR_CLASSES: Record<string, string> = {
-    zinc: 'bg-zinc-600',
-    slate: 'bg-slate-600',
-    stone: 'bg-stone-600',
-    gray: 'bg-gray-600',
-    neutral: 'bg-neutral-600',
-    red: 'bg-red-600',
-    rose: 'bg-rose-600',
-    orange: 'bg-orange-500',
-    amber: 'bg-amber-500',
-    yellow: 'bg-yellow-400',
-    lime: 'bg-lime-500',
-    green: 'bg-emerald-600',
-    teal: 'bg-teal-600',
 };
 
 export default function Profile({
@@ -43,11 +25,6 @@ export default function Profile({
 }) {
     const { auth } = usePage<PageProps>().props;
     const isAdmin = auth.user.role === 'admin';
-    const [themeColor, setThemeColor] = useState(
-        auth.user.theme_color ?? 'zinc'
-    );
-    const [themeColorChanged, setThemeColorChanged] = useState(false);
-    const [hoveredColor, setHoveredColor] = useState<string | null>(null);
     const passwordInput = useRef<HTMLInputElement>(null);
     const currentPasswordInput = useRef<HTMLInputElement>(null);
 
@@ -63,11 +40,6 @@ export default function Profile({
                         {...ProfileController.update.form()}
                         options={{
                             preserveScroll: true,
-                        }}
-                        onSuccess={() => {
-                            if (themeColorChanged) {
-                                window.location.reload();
-                            }
                         }}
                         className="space-y-4"
                     >
@@ -100,47 +72,6 @@ export default function Profile({
                                         placeholder="Email address"
                                     />
                                     <InputError className="mt-1" message={errors.email} />
-                                </div>
-
-                                <div className="grid gap-2">
-                                    <Label className="text-xs">Theme color</Label>
-                                    <div className="flex w-full gap-1">
-                                        {THEME_COLORS.map((color) => {
-                                            const selected = themeColor === color;
-                                            const isHovered = hoveredColor === color;
-                                            const shouldExpand = isHovered || (selected && !hoveredColor);
-
-                                            return (
-                                                <label
-                                                    key={color}
-                                                    onMouseEnter={() => setHoveredColor(color)}
-                                                    onMouseLeave={() => setHoveredColor(null)}
-                                                    className={cn(
-                                                        'relative cursor-pointer overflow-hidden rounded-md transition-all duration-300 ease-in-out',
-                                                        'h-24',
-                                                        shouldExpand ? 'basis-16 flex-shrink-0 flex-grow-0' : 'basis-4 flex-grow flex-shrink'
-                                                    )}
-                                                >
-                                                    <input
-                                                        type="radio"
-                                                        name="theme_color"
-                                                        value={color}
-                                                        checked={selected}
-                                                        onChange={() => {
-                                                            setThemeColor(color);
-                                                            setThemeColorChanged(color !== (auth.user.theme_color ?? 'zinc'));
-                                                        }}
-                                                        className="sr-only"
-                                                    />
-                                                    <div className={cn(
-                                                        'relative flex h-full w-full flex-col items-center justify-center rounded-md transition-all duration-300',
-                                                        THEME_COLOR_CLASSES[color] ?? 'bg-muted',
-                                                        selected && 'ring-2 ring-inset ring-foreground'
-                                                    )} />
-                                                </label>
-                                            );
-                                        })}
-                                    </div>
                                 </div>
 
                                 {mustVerifyEmail && auth.user.email_verified_at === null && (

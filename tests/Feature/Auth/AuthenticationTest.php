@@ -1,6 +1,8 @@
 <?php
 
+use App\Models\SuperadminTenantUser;
 use App\Models\User;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\RateLimiter;
 use Laravel\Fortify\Features;
 
@@ -20,6 +22,21 @@ test('users can authenticate using the login screen', function () {
 
     $this->assertAuthenticated();
     $response->assertRedirect(route('dashboard', absolute: false));
+});
+
+test('tenant user authentication identifiers do not collide with institution users', function () {
+    $institutionUser = User::factory()->create();
+    $tenantUser = SuperadminTenantUser::create([
+        'name' => 'Tenant User',
+        'email' => 'tenant-user@example.com',
+        'password' => 'password',
+    ]);
+
+    expect($tenantUser->id)->toBe($institutionUser->id)
+        ->and(Auth::createUserProvider('users')->retrieveById($tenantUser->getAuthIdentifier()))
+        ->toBeInstanceOf(SuperadminTenantUser::class)
+        ->and(Auth::createUserProvider('users')->retrieveById($institutionUser->getAuthIdentifier()))
+        ->toBeInstanceOf(User::class);
 });
 
 test('users with two factor enabled are redirected to two factor challenge', function () {

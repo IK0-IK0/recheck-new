@@ -1,5 +1,6 @@
 import { router } from '@inertiajs/react';
-import { FileText, Download, Trash2, Send, CheckCircle2, Circle, Eye } from 'lucide-react';
+import { FileText, Download, Trash2, CheckCircle2, Circle, Eye, Loader2 } from 'lucide-react';
+import { useState } from 'react';
 import { toast } from 'sonner';
 import DocumentUploadModal from '@/components/DocumentUploadModal';
 import { Button } from '@/components/ui/button';
@@ -22,24 +23,34 @@ type Proposal = {
     title: string;
     process_id: number | null;
     current_phase_id: number | null;
+    current_action: {
+        id: number;
+        name: string;
+        description: string | null;
+        decision_mode: 'approve_deny' | 'custom';
+        custom_decision_branches: { id: string; label: string }[] | null;
+    } | null;
     documents: DocumentRecord[];
 };
 
 type Props = {
     proposal: Proposal;
     phases: Phase[];
+    canReview: boolean;
 };
 
-export default function Show({ proposal, phases }: Props) {
+export default function Show({ proposal, phases, canReview }: Props) {
     const uploadProgress = null;
+    const [isSubmittingReview, setIsSubmittingReview] = useState(false);
 
-    const handleUpload = async ({ label, files }: { name: string; label: string; files: File[] }) => {
+    const handleUpload = async ({ name, label, files }: { name: string; label: string; files: File[] }) => {
         const formData = new FormData();
 
         if (files.length > 0) {
             formData.append('file', files[0]);
         }
 
+        formData.append('name', name);
         formData.append('label', label);
 
         return new Promise<boolean>((resolve) => router.post(`/tenant/proposals/${proposal.id}/documents`, formData, {
@@ -48,7 +59,7 @@ export default function Show({ proposal, phases }: Props) {
                 resolve(true);
             },
             onError: (errors) => {
-                toast.error(errors.file || errors.storage || 'Upload failed.');
+                toast.error(errors.file || errors.name || errors.storage || 'Upload failed.');
                 resolve(false);
             }
         }));
@@ -64,14 +75,12 @@ return;
         });
     };
 
-    const handleSubmitProposal = () => {
-        if (!confirm('Are you sure you want to submit this proposal to the next phase?')) {
-return;
-}
-
-        router.post(`/tenant/proposals/${proposal.id}/submit`, {}, {
-            onSuccess: () => toast.success('Proposal submitted successfully.'),
-            onError: (errors) => toast.error(errors.process || 'Submission failed.')
+    const handleReviewDecision = (decision: string) => {
+        router.post(`/tenant/proposals/${proposal.id}/review`, { decision }, {
+            onStart: () => setIsSubmittingReview(true),
+            onFinish: () => setIsSubmittingReview(false),
+            onSuccess: () => toast.success('Review decision submitted.'),
+            onError: (errors) => toast.error(errors.workflow || 'Review decision failed.')
         });
     };
 
@@ -81,12 +90,30 @@ return;
             <div className="flex items-center justify-between border-b border-border bg-surface px-6 py-4">
                 <div>
                     <h1 className="text-xl font-bold">{proposal.title}</h1>
-                    <p className="text-sm text-muted-foreground">Manage proposal documents and track status</p>
+                    <p className="text-sm text-muted-foreground">Review the current workflow action</p>
                 </div>
-                <Button onClick={handleSubmitProposal} className="gap-2">
-                    <Send className="size-4" />
-                    Submit / Send Files
-                </Button>
+                {canReview && proposal.current_action ? (
+                    proposal.current_action.decision_mode === 'custom'
+                        ? proposal.current_action.custom_decision_branches?.map((branch) => (
+                            <Button
+                                key={branch.id}
+                                onClick={() => handleReviewDecision(branch.id)}
+                                disabled={isSubmittingReview}
+                            >
+                                {isSubmittingReview ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                                {branch.label}
+                            </Button>
+                        ))
+                        : <>
+                            <Button onClick={() => handleReviewDecision('approve')} disabled={isSubmittingReview}>
+                                {isSubmittingReview ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                                Approve
+                            </Button>
+                            <Button variant="outline" onClick={() => handleReviewDecision('deny')} disabled={isSubmittingReview}>
+                                Deny
+                            </Button>
+                        </>
+                ) : null}
             </div>
 
             <div className="flex-1 overflow-auto p-6">
@@ -120,6 +147,15 @@ return;
                         </div>
                     </div>
 
+                    {proposal.current_action ? (
+                        <div className="rounded-lg border border-border bg-card p-5">
+                            <h2 className="font-semibold">Review action · {proposal.current_action.name}</h2>
+                            {proposal.current_action.description ? (
+                                <p className="mt-2 text-sm text-muted-foreground">{proposal.current_action.description}</p>
+                            ) : null}
+                        </div>
+                    ) : null}
+
                     {/* Document Manager */}
                     <div className="rounded-lg border border-border bg-card shadow-sm">
                         <div className="flex items-center justify-between border-b border-border p-4">
@@ -127,13 +163,13 @@ return;
                                 <h2 className="text-lg font-semibold">Documents</h2>
                                 <p className="text-sm text-muted-foreground">Files submitted for this proposal.</p>
                             </div>
-                            <DocumentUploadModal
+                            {!canReview ? <DocumentUploadModal
                                 title="Upload File"
                                 submitLabel="Upload"
                                 onSubmit={handleUpload}
                                 uploadProgress={uploadProgress}
                                 trigger={<Button size="sm">Add File</Button>}
-                            />
+                            /> : null}
                         </div>
                         <div className="p-0">
                             {proposal.documents.length > 0 ? (
@@ -169,9 +205,11 @@ return;
                                                                 Download
                                                             </a>
                                                         </Button>
-                                                        <Button variant="destructive" size="icon" onClick={() => handleDeleteDocument(doc.id)}>
-                                                            <Trash2 className="size-3.5" />
-                                                        </Button>
+                                                        {!canReview ? (
+                                                            <Button variant="destructive" size="icon" onClick={() => handleDeleteDocument(doc.id)}>
+                                                                <Trash2 className="size-3.5" />
+                                                            </Button>
+                                                        ) : null}
                                                     </div>
                                                 </td>
                                             </tr>

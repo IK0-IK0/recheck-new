@@ -1,10 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, ChevronDown, ChevronUp, Plus, Search, Trash2 } from 'lucide-react';
+import {
+    Check,
+    ChevronDown,
+    ChevronUp,
+    Plus,
+    Search,
+    Trash2,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import {
     Dialog,
     DialogClose,
@@ -24,16 +37,87 @@ const defaultActionInitialValues = {
     document_ids: [],
     roles: [],
     reviewer_groups: [],
+    approve_action_id: null,
+    deny_action_id: null,
+    decision_mode: 'approve_deny',
+    custom_decision_branches: [],
+    decision_branches: [],
 };
+
+const createDecisionBranch = (type = 'custom', index = 1) => ({
+    id: `decision-${Date.now()}-${index}`,
+    type,
+    label:
+        type === 'approve'
+            ? 'Approve'
+            : type === 'deny'
+              ? 'Deny'
+              : `Outcome ${index - 2}`,
+    destination: type === 'deny' ? 'end' : 'next',
+});
 
 const createReviewerGroup = (number = 1) => ({
     id: `reviewer-group-${Date.now()}-${number}`,
-    name: `Review group ${number}`,
+    name: `Assignment ${number}`,
     roleIds: [],
     documentIds: [],
 });
 
-function SearchableMultiSelect({ label, items, selectedIds, onToggle, placeholder = 'Select items', openDirection = 'down', singleSelect = false }) {
+function normalizeActionValues(actionValues = {}) {
+    const standardBranches = [
+        {
+            ...createDecisionBranch('approve', 1),
+            destination: actionValues.approve_action_id
+                ? `action:${actionValues.approve_action_id}`
+                : 'next',
+        },
+        {
+            ...createDecisionBranch('deny', 2),
+            destination: actionValues.deny_action_id
+                ? `action:${actionValues.deny_action_id}`
+                : 'end',
+        },
+    ];
+
+    return {
+        ...defaultActionInitialValues,
+        ...actionValues,
+        roles: actionValues.roles ?? [],
+        document_ids: actionValues.document_ids ?? [],
+        reviewer_groups: actionValues.reviewer_groups?.length
+            ? actionValues.reviewer_groups.map((group) => ({
+                  ...group,
+                  roleIds: group.roleIds ?? group.role_ids ?? [],
+                  documentIds: group.documentIds ?? group.document_ids ?? [],
+              }))
+            : [
+                  {
+                      ...createReviewerGroup(),
+                      roleIds: actionValues.roles ?? [],
+                      documentIds: actionValues.document_ids ?? [],
+                  },
+              ],
+        decision_mode: actionValues.decision_mode ?? 'approve_deny',
+        custom_decision_branches: actionValues.custom_decision_branches ?? [],
+        decision_branches: [
+            ...standardBranches,
+            ...(actionValues.custom_decision_branches ?? []).map((branch) => ({
+                ...branch,
+                type: 'custom',
+            })),
+        ],
+    };
+}
+
+function SearchableMultiSelect({
+    label,
+    items,
+    selectedIds,
+    onToggle,
+    placeholder = 'Select items',
+    openDirection = 'down',
+    singleSelect = false,
+}) {
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState('');
     const containerRef = useRef(null);
@@ -41,14 +125,20 @@ function SearchableMultiSelect({ label, items, selectedIds, onToggle, placeholde
     const menuRef = useRef(null);
     const [menuPosition, setMenuPosition] = useState(null);
     const selectedItems = items.filter((item) => selectedIds.includes(item.id));
-    const filteredItems = items.filter((item) => item.name.toLowerCase().includes(query.toLowerCase()));
+    const filteredItems = items.filter((item) =>
+        item.name.toLowerCase().includes(query.toLowerCase()),
+    );
     const selectionLabel = singleSelect
-        ? selectedItems[0]?.name ?? placeholder
-        : selectedItems.length ? `${selectedItems.length} selected` : placeholder;
+        ? (selectedItems[0]?.name ?? placeholder)
+        : selectedItems.length
+          ? `${selectedItems.length} selected`
+          : placeholder;
 
     const updateMenuPosition = () => {
         const trigger = triggerRef.current;
-        const dialogContainer = containerRef.current?.closest('[data-slot="dialog-content"]');
+        const dialogContainer = containerRef.current?.closest(
+            '[data-slot="dialog-content"]',
+        );
 
         if (!trigger || !dialogContainer) {
             return;
@@ -56,17 +146,19 @@ function SearchableMultiSelect({ label, items, selectedIds, onToggle, placeholde
 
         const rect = trigger.getBoundingClientRect();
         const containerRect = dialogContainer.getBoundingClientRect();
-        setMenuPosition(openDirection === 'up'
-            ? {
-                bottom: containerRect.bottom - rect.top + 4,
-                left: rect.left - containerRect.left,
-                width: rect.width,
-            }
-            : {
-                top: rect.bottom - containerRect.top + 4,
-                left: rect.left - containerRect.left,
-                width: rect.width,
-            });
+        setMenuPosition(
+            openDirection === 'up'
+                ? {
+                      bottom: containerRect.bottom - rect.top + 4,
+                      left: rect.left - containerRect.left,
+                      width: rect.width,
+                  }
+                : {
+                      top: rect.bottom - containerRect.top + 4,
+                      left: rect.left - containerRect.left,
+                      width: rect.width,
+                  },
+        );
     };
 
     useEffect(() => {
@@ -79,9 +171,10 @@ function SearchableMultiSelect({ label, items, selectedIds, onToggle, placeholde
 
         const handlePointerDown = (event) => {
             const eventPath = event.composedPath?.() ?? [];
-            const isInsidePicker = containerRef.current?.contains(event.target)
-                || menuRef.current?.contains(event.target)
-                || eventPath.includes(menuRef.current);
+            const isInsidePicker =
+                containerRef.current?.contains(event.target) ||
+                menuRef.current?.contains(event.target) ||
+                eventPath.includes(menuRef.current);
 
             if (!isInsidePicker) {
                 setOpen(false);
@@ -107,10 +200,16 @@ function SearchableMultiSelect({ label, items, selectedIds, onToggle, placeholde
                 type="button"
                 onClick={() => setOpen(!open)}
                 aria-label={label}
-                className="flex min-h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-left text-sm shadow-xs outline-none transition hover:border-ring focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                className="flex min-h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-left text-sm shadow-xs transition outline-none hover:border-ring focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 aria-expanded={open}
             >
-                <span className={selectedItems.length ? 'truncate text-foreground' : 'text-muted-foreground'}>
+                <span
+                    className={
+                        selectedItems.length
+                            ? 'truncate text-foreground'
+                            : 'text-muted-foreground'
+                    }
+                >
                     {selectionLabel}
                 </span>
                 {openDirection === 'up' ? (
@@ -119,55 +218,73 @@ function SearchableMultiSelect({ label, items, selectedIds, onToggle, placeholde
                     <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
                 )}
             </button>
-            {open && menuPosition && typeof document !== 'undefined' ? createPortal(
-                <div
-                    ref={menuRef}
-                    style={menuPosition}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    onMouseDown={(event) => event.stopPropagation()}
-                    className="absolute z-[100] overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md"
-                >
-                    <div className="flex items-center gap-2 border-b border-border px-3">
-                        <Search className="size-4 shrink-0 text-muted-foreground" />
-                        <input
-                            autoFocus
-                            value={query}
-                            onChange={(event) => setQuery(event.target.value)}
-                            placeholder="Search..."
-                            className="h-9 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-                        />
-                    </div>
-                    <div className="action-picker-scrollbar h-24 overflow-y-scroll py-1 pr-2">
-                        {filteredItems.length ? filteredItems.map((item) => {
-                            const selected = selectedIds.includes(item.id);
+            {open && menuPosition && typeof document !== 'undefined'
+                ? createPortal(
+                      <div
+                          ref={menuRef}
+                          style={menuPosition}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onMouseDown={(event) => event.stopPropagation()}
+                          className="absolute z-[100] overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md"
+                      >
+                          <div className="flex items-center gap-2 border-b border-border px-3">
+                              <Search className="size-4 shrink-0 text-muted-foreground" />
+                              <input
+                                  autoFocus
+                                  value={query}
+                                  onChange={(event) =>
+                                      setQuery(event.target.value)
+                                  }
+                                  placeholder="Search..."
+                                  className="h-9 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                              />
+                          </div>
+                          <div className="custom-scrollbar h-24 overflow-y-scroll py-1 pr-2">
+                              {filteredItems.length ? (
+                                  filteredItems.map((item) => {
+                                      const selected = selectedIds.includes(
+                                          item.id,
+                                      );
 
-                            return (
-                                <button
-                                    key={item.id}
-                                    type="button"
-                                    onClick={() => {
-                                        onToggle(item.id);
-                                        if (singleSelect) {
-                                            setOpen(false);
-                                        }
-                                    }}
-                                    className="flex w-full items-center gap-2 rounded-sm px-3 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
-                                >
-                                    <span className={`flex size-4 items-center justify-center rounded-sm border ${selected ? 'border-primary bg-primary text-primary-foreground' : 'border-input'}`}>
-                                        {selected ? <Check className="size-3" /> : null}
-                                    </span>
-                                    <span className="truncate">{item.name}</span>
-                                </button>
-                            );
-                        }) : (
-                            <p className="px-2 py-3 text-sm text-muted-foreground">No matches found.</p>
-                        )}
-                    </div>
-                </div>,
-                containerRef.current?.closest('[data-slot="dialog-content"]')
-                    ?? document.fullscreenElement
-                    ?? document.body
-            ) : null}
+                                      return (
+                                          <button
+                                              key={item.id}
+                                              type="button"
+                                              onClick={() => {
+                                                  onToggle(item.id);
+                                                  if (singleSelect) {
+                                                      setOpen(false);
+                                                  }
+                                              }}
+                                              className="flex w-full items-center gap-2 rounded-sm px-3 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground"
+                                          >
+                                              <span
+                                                  className={`flex size-4 items-center justify-center rounded-sm border ${selected ? 'border-primary bg-primary text-primary-foreground' : 'border-input'}`}
+                                              >
+                                                  {selected ? (
+                                                      <Check className="size-3" />
+                                                  ) : null}
+                                              </span>
+                                              <span className="truncate">
+                                                  {item.name}
+                                              </span>
+                                          </button>
+                                      );
+                                  })
+                              ) : (
+                                  <p className="px-2 py-3 text-sm text-muted-foreground">
+                                      No matches found.
+                                  </p>
+                              )}
+                          </div>
+                      </div>,
+                      containerRef.current?.closest(
+                          '[data-slot="dialog-content"]',
+                      ) ??
+                          document.fullscreenElement ??
+                          document.body,
+                  )
+                : null}
         </div>
     );
 }
@@ -182,10 +299,14 @@ export default function ActionModal({
     initialValues = defaultActionInitialValues,
     roles = [],
     documents = [],
+    actions = [],
+    actionId = null,
     onSubmit,
 }) {
     const [internalOpen, setInternalOpen] = useState(false);
-    const [values, setValues] = useState(initialValues);
+    const [values, setValues] = useState(() =>
+        normalizeActionValues(initialValues),
+    );
     const [errors, setErrors] = useState({ name: '' });
     const [processing, setProcessing] = useState(false);
 
@@ -197,15 +318,7 @@ export default function ActionModal({
             return;
         }
 
-        setValues({
-            ...defaultActionInitialValues,
-            ...initialValues,
-            roles: initialValues.roles ?? [],
-            document_ids: initialValues.document_ids ?? [],
-            reviewer_groups: initialValues.reviewer_groups?.length
-                ? initialValues.reviewer_groups
-                : [createReviewerGroup()],
-        });
+        setValues(normalizeActionValues(initialValues));
         setErrors({ name: '' });
     }, [dialogOpen]);
 
@@ -213,7 +326,34 @@ export default function ActionModal({
         event.preventDefault();
 
         if (!values.name.trim()) {
-            setErrors({ name: 'Action name is required.' });
+            setErrors({
+                name: 'Action name is required.',
+                decision_branches: '',
+            });
+
+            return;
+        }
+
+        const decisionBranches = visibleDecisionBranches;
+        const decisionMode = values.action_type === 'review'
+            ? values.decision_mode
+            : 'approve_deny';
+        const decisionLabels = decisionBranches.map((branch) =>
+            branch.label.trim().toLowerCase(),
+        );
+
+        if (
+            decisionBranches.some((branch) => !branch.label.trim()) ||
+            (decisionMode === 'custom' && decisionBranches.length === 0) ||
+            new Set(decisionLabels).size !== decisionLabels.length
+        ) {
+            setErrors({
+                name: '',
+                decision_branches: decisionMode === 'custom' && decisionBranches.length === 0
+                    ? 'Add at least one custom outcome.'
+                    : 'Give every decision outcome a unique name.',
+            });
+
             return;
         }
 
@@ -221,21 +361,46 @@ export default function ActionModal({
 
         try {
             const submissionValues = { ...values };
-            delete submissionValues.reviewer_groups;
-            const { roles: selectedRoles, ...rest } = submissionValues;
-            await onSubmit?.({ ...rest, role_ids: selectedRoles });
+            delete submissionValues.decision_branches;
+            delete submissionValues.roles;
+            const { reviewer_groups: reviewerGroups, ...rest } = submissionValues;
+            const roleIds = [...new Set(reviewerGroups.flatMap((group) => group.roleIds))];
+            const documentIds = [...new Set(reviewerGroups.flatMap((group) => group.documentIds))];
+            const actionDestination = (branch) =>
+                branch?.destination.startsWith('action:')
+                    ? Number(branch.destination.slice('action:'.length))
+                    : null;
+            const savedDecisionBranches = decisionBranches.map(({ id, label, destination }) => ({
+                id,
+                label,
+                destination,
+            }));
+
+            await onSubmit?.({
+                ...rest,
+                role_ids: roleIds,
+                document_ids: documentIds,
+                reviewer_groups: reviewerGroups.map((group) => ({
+                    id: group.id,
+                    name: group.name,
+                    role_ids: group.roleIds,
+                    document_ids: group.documentIds,
+                })),
+                decision_mode: decisionMode,
+                approve_action_id: decisionMode === 'approve_deny'
+                    ? actionDestination(decisionBranches.find((branch) => branch.type === 'approve'))
+                    : null,
+                deny_action_id: decisionMode === 'approve_deny'
+                    ? actionDestination(decisionBranches.find((branch) => branch.type === 'deny'))
+                    : null,
+                custom_decision_branches: decisionMode === 'custom'
+                    ? savedDecisionBranches
+                    : [],
+            });
             setDialogOpen(false);
         } finally {
             setProcessing(false);
         }
-    };
-
-    const toggleDocument = (documentId) => {
-        const nextDocumentIds = values.document_ids.includes(documentId)
-            ? values.document_ids.filter((item) => item !== documentId)
-            : [...values.document_ids, documentId];
-
-        setValues({ ...values, document_ids: nextDocumentIds });
     };
 
     const addReviewerGroup = () => {
@@ -243,7 +408,7 @@ export default function ActionModal({
             ...values,
             reviewer_groups: [
                 ...values.reviewer_groups,
-                    createReviewerGroup(values.reviewer_groups.length + 1),
+                createReviewerGroup(values.reviewer_groups.length + 1),
             ],
         });
     };
@@ -251,16 +416,18 @@ export default function ActionModal({
     const updateReviewerGroup = (groupId, updates) => {
         setValues({
             ...values,
-            reviewer_groups: values.reviewer_groups.map((group) => (
-                group.id === groupId ? { ...group, ...updates } : group
-            )),
+            reviewer_groups: values.reviewer_groups.map((group) =>
+                group.id === groupId ? { ...group, ...updates } : group,
+            ),
         });
     };
 
     const removeReviewerGroup = (groupId) => {
         setValues({
             ...values,
-            reviewer_groups: values.reviewer_groups.filter((group) => group.id !== groupId),
+            reviewer_groups: values.reviewer_groups.filter(
+                (group) => group.id !== groupId,
+            ),
         });
     };
 
@@ -272,6 +439,81 @@ export default function ActionModal({
         updateReviewerGroup(group.id, { documentIds });
     };
 
+    const updateDecisionBranch = (branchId, updates) => {
+        setValues({
+            ...values,
+            decision_branches: values.decision_branches.map((branch) =>
+                branch.id === branchId ? { ...branch, ...updates } : branch,
+            ),
+        });
+    };
+
+    const addDecisionBranch = () => {
+        const customBranchCount = values.decision_branches.filter(
+            (branch) => branch.type === 'custom',
+        ).length;
+
+        setValues({
+            ...values,
+            decision_branches: [
+                ...values.decision_branches,
+                createDecisionBranch('custom', customBranchCount + 3),
+            ],
+        });
+    };
+
+    const updateDecisionMode = (decisionMode) => {
+        const customBranches = values.decision_branches.filter(
+            (branch) => branch.type === 'custom',
+        );
+        const nextBranches = decisionMode === 'custom' && customBranches.length === 0
+            ? [...values.decision_branches, createDecisionBranch('custom', 3)]
+            : values.decision_branches;
+
+        setValues({
+            ...values,
+            decision_mode: decisionMode,
+            decision_branches: nextBranches,
+        });
+    };
+
+    const moveDecisionBranch = (branchId, direction) => {
+        const branchIndex = values.decision_branches.findIndex(
+            (branch) => branch.id === branchId,
+        );
+        const targetIndex = branchIndex + direction;
+
+        if (
+            branchIndex < 0 ||
+            targetIndex < 0 ||
+            targetIndex >= values.decision_branches.length
+        ) {
+            return;
+        }
+
+        const decisionBranches = [...values.decision_branches];
+        [decisionBranches[branchIndex], decisionBranches[targetIndex]] = [
+            decisionBranches[targetIndex],
+            decisionBranches[branchIndex],
+        ];
+        setValues({ ...values, decision_branches: decisionBranches });
+    };
+
+    const removeDecisionBranch = (branchId) => {
+        setValues({
+            ...values,
+            decision_branches: values.decision_branches.filter(
+                (branch) => branch.id !== branchId,
+            ),
+        });
+    };
+
+    const visibleDecisionBranches = values.decision_branches.filter((branch) => (
+        values.decision_mode === 'custom'
+            ? branch.type === 'custom'
+            : branch.type !== 'custom'
+    ));
+
     return (
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             {trigger ? (
@@ -282,151 +524,537 @@ export default function ActionModal({
                 </DialogTrigger>
             ) : null}
             <DialogContent
-                container={typeof document !== 'undefined' ? document.fullscreenElement ?? undefined : undefined}
-                className="max-h-[calc(100vh-2rem)] overflow-hidden sm:max-w-2xl"
+                container={
+                    typeof document !== 'undefined'
+                        ? (document.fullscreenElement ?? undefined)
+                        : undefined
+                }
+                className="flex h-[min(88vh,860px)] max-h-[calc(100vh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl lg:max-w-4xl"
             >
-                <DialogHeader>
-                    <DialogTitle>{title}</DialogTitle>
-                    <DialogDescription>{description}</DialogDescription>
+                <DialogHeader className="shrink-0 border-b border-border px-6 py-5 pr-14 text-left">
+                    <DialogTitle className="text-lg">{title}</DialogTitle>
+                    <DialogDescription className="text-sm">
+                        {description}
+                    </DialogDescription>
                 </DialogHeader>
-                <form className="space-y-4 pr-1" onSubmit={handleSubmit}>
-                    <div className="grid gap-2">
-                        <Label htmlFor="action-name">Name</Label>
-                        <Input
-                            id="action-name"
-                            value={values.name}
-                            onChange={(event) => setValues({ ...values, name: event.target.value })}
-                            placeholder="Action name"
-                        />
-                        {errors.name ? (
-                            <p className="text-sm text-destructive">{errors.name}</p>
-                        ) : null}
-                    </div>
-                    <div className="grid gap-2">
-                        <Label htmlFor="action-description">Description</Label>
-                        <textarea
-                            id="action-description"
-                            value={values.description}
-                            onChange={(event) => setValues({ ...values, description: event.target.value })}
-                            className="min-h-20 max-h-28 w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs outline-none transition focus-visible:border-ring focus-visible:ring-ring/50"
-                            placeholder="Optional description"
-                        />
-                    </div>
-
-                    <div className="grid gap-2">
-                        <Label htmlFor="action-type">Action type</Label>
-                        <Select
-                            value={values.action_type ?? 'review'}
-                            onValueChange={(actionType) => setValues({
-                                ...values,
-                                action_type: actionType,
-                                requires_file: actionType === 'submit',
-                            })}
-                        >
-                            <SelectTrigger id="action-type" className="w-full">
-                                <SelectValue placeholder="Select action type" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="review">Review</SelectItem>
-                                <SelectItem value="submit">Submit</SelectItem>
-                            </SelectContent>
-                        </Select>
-                    </div>
-
-                    {values.action_type === 'submit' ? (
-                        <div className="grid gap-2">
-                            <Label>Required documents</Label>
-                            <SearchableMultiSelect
-                                label="Required documents"
-                                items={documents}
-                                selectedIds={values.document_ids}
-                                onToggle={toggleDocument}
-                                placeholder="Choose optional documents"
-                                openDirection="up"
+                <form
+                    className="flex min-h-0 flex-1 flex-col"
+                    onSubmit={handleSubmit}
+                >
+                    <div className="custom-scrollbar min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-6">
+                        <div className="grid gap-3">
+                            <Label htmlFor="action-name">Name</Label>
+                            <Input
+                                id="action-name"
+                                value={values.name}
+                                onChange={(event) =>
+                                    setValues({
+                                        ...values,
+                                        name: event.target.value,
+                                    })
+                                }
+                                placeholder="Action name"
+                            />
+                            {errors.name ? (
+                                <p className="text-sm text-destructive">
+                                    {errors.name}
+                                </p>
+                            ) : null}
+                        </div>
+                        <div className="grid gap-3">
+                            <Label htmlFor="action-description">
+                                Description
+                            </Label>
+                            <textarea
+                                id="action-description"
+                                value={values.description}
+                                onChange={(event) =>
+                                    setValues({
+                                        ...values,
+                                        description: event.target.value,
+                                    })
+                                }
+                                className="max-h-40 min-h-24 w-full resize-y rounded-md border border-input bg-transparent px-3 py-2.5 text-sm shadow-xs transition outline-none focus-visible:border-ring focus-visible:ring-ring/50"
+                                placeholder="Optional description"
                             />
                         </div>
-                    ) : null}
 
-                    {values.action_type === 'review' ? (
-                        <div className="action-picker-scrollbar grid max-h-[55vh] gap-4 overflow-y-auto rounded-lg border border-border bg-muted/20 p-4 pr-3">
-                            <div className="grid gap-3">
-                                <div className="flex flex-wrap items-start justify-between gap-3">
-                                    <div>
-                                        <Label>Reviewer groups</Label>
+                        <div className="grid gap-3">
+                            <Label htmlFor="action-type">Action type</Label>
+                            <Select
+                                value={values.action_type ?? 'review'}
+                                onValueChange={(actionType) =>
+                                    setValues({
+                                        ...values,
+                                        action_type: actionType,
+                                        requires_file: actionType === 'submit',
+                                        approve_action_id:
+                                            actionType === 'review'
+                                                ? values.approve_action_id
+                                                : null,
+                                        deny_action_id:
+                                            actionType === 'review'
+                                                ? values.deny_action_id
+                                                : null,
+                                    })
+                                }
+                            >
+                                <SelectTrigger
+                                    id="action-type"
+                                    className="w-full"
+                                >
+                                    <SelectValue placeholder="Select action type" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="review">
+                                        Review
+                                    </SelectItem>
+                                    <SelectItem value="submit">
+                                        Submit
+                                    </SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        {values.action_type === 'review' ? (
+                            <div className="grid gap-7">
+                                <section className="grid gap-5 rounded-xl border border-border bg-muted/20 p-5 sm:p-6">
+                                    <div className="grid gap-4">
+                                        <div className="flex flex-wrap items-start justify-between gap-3">
+                                            <div>
+                                                <Label className="text-sm">
+                                                    Outcome mode
+                                                </Label>
+                                                <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+                                                    Choose standard Approve and
+                                                    Deny routes or define your
+                                                    own named outcomes.
+                                                </p>
+                                            </div>
+                                            {values.decision_mode ===
+                                            'custom' ? (
+                                                <Button
+                                                    type="button"
+                                                    variant="secondary"
+                                                    size="sm"
+                                                    className="shrink-0"
+                                                    onClick={addDecisionBranch}
+                                                >
+                                                    <Plus className="size-4" />
+                                                    Add custom outcome
+                                                </Button>
+                                            ) : null}
+                                        </div>
+                                        <div className="grid gap-2">
+                                            <Label htmlFor="decision-mode">
+                                                Mode
+                                            </Label>
+                                            <Select
+                                                value={values.decision_mode}
+                                                onValueChange={
+                                                    updateDecisionMode
+                                                }
+                                            >
+                                                <SelectTrigger
+                                                    id="decision-mode"
+                                                    className="h-10 w-full"
+                                                >
+                                                    <SelectValue />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="approve_deny">
+                                                        Approve and Deny
+                                                    </SelectItem>
+                                                    <SelectItem value="custom">
+                                                        Custom outcomes
+                                                    </SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                        {errors.decision_branches ? (
+                                            <p className="text-sm text-destructive">
+                                                {errors.decision_branches}
+                                            </p>
+                                        ) : null}
+                                        <div className="grid gap-4">
+                                            {visibleDecisionBranches.map(
+                                                (branch, index) => (
+                                                    <div
+                                                        key={branch.id}
+                                                        className="grid gap-4 rounded-xl border border-border bg-background p-4 sm:p-5"
+                                                    >
+                                                        <div className="flex flex-nowrap items-center gap-2">
+                                                            <span
+                                                                className={`size-2.5 shrink-0 rounded-full ${
+                                                                    branch.type ===
+                                                                    'approve'
+                                                                        ? 'bg-green-500'
+                                                                        : branch.type ===
+                                                                            'deny'
+                                                                          ? 'bg-red-500'
+                                                                          : 'bg-violet-500'
+                                                                }`}
+                                                            />
+                                                            {branch.type ===
+                                                            'custom' ? (
+                                                                <Input
+                                                                    value={
+                                                                        branch.label
+                                                                    }
+                                                                    onChange={(
+                                                                        event,
+                                                                    ) =>
+                                                                        updateDecisionBranch(
+                                                                            branch.id,
+                                                                            {
+                                                                                label: event
+                                                                                    .target
+                                                                                    .value,
+                                                                            },
+                                                                        )
+                                                                    }
+                                                                    aria-label={`Outcome ${index + 1} name`}
+                                                                    placeholder="Outcome name"
+                                                                    className="h-8 min-w-0 flex-1"
+                                                                />
+                                                            ) : (
+                                                                <p className="flex-1 text-sm font-semibold">
+                                                                    {
+                                                                        branch.label
+                                                                    }
+                                                                </p>
+                                                            )}
+                                                            <Button
+                                                                type="button"
+                                                                variant="ghost"
+                                                                size="icon"
+                                                                className="shrink-0"
+                                                                onClick={() =>
+                                                                    moveDecisionBranch(
+                                                                        branch.id,
+                                                                        -1,
+                                                                    )
+                                                                }
+                                                                disabled={
+                                                                    index === 0
+                                                                }
+                                                                aria-label={`Move ${branch.label} up`}
+                                                                title="Move up"
+                                                            >
+                                                                <ChevronUp className="size-4" />
+                                                            </Button>
+                                                            <Button
+                                                                type="button"
+                                                                variant="ghost"
+                                                                size="icon"
+                                                                className="shrink-0"
+                                                                onClick={() =>
+                                                                    moveDecisionBranch(
+                                                                        branch.id,
+                                                                        1,
+                                                                    )
+                                                                }
+                                                                disabled={
+                                                                    index ===
+                                                                    visibleDecisionBranches.length -
+                                                                        1
+                                                                }
+                                                                aria-label={`Move ${branch.label} down`}
+                                                                title="Move down"
+                                                            >
+                                                                <ChevronDown className="size-4" />
+                                                            </Button>
+                                                            {branch.type ===
+                                                            'custom' ? (
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="ghost"
+                                                                    size="icon"
+                                                                    className="shrink-0"
+                                                                    onClick={() =>
+                                                                        removeDecisionBranch(
+                                                                            branch.id,
+                                                                        )
+                                                                    }
+                                                                    aria-label={`Remove ${branch.label}`}
+                                                                    title="Remove outcome"
+                                                                >
+                                                                    <Trash2 className="size-4 text-destructive" />
+                                                                </Button>
+                                                            ) : null}
+                                                        </div>
+                                                        <div className="grid gap-2.5 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] sm:items-center">
+                                                            <Label
+                                                                htmlFor={`decision-destination-${branch.id}`}
+                                                            >
+                                                                Send to
+                                                            </Label>
+                                                            <Select
+                                                                value={
+                                                                    branch.destination
+                                                                }
+                                                                onValueChange={(
+                                                                    destination,
+                                                                ) =>
+                                                                    updateDecisionBranch(
+                                                                        branch.id,
+                                                                        {
+                                                                            destination,
+                                                                        },
+                                                                    )
+                                                                }
+                                                            >
+                                                                <SelectTrigger
+                                                                    id={`decision-destination-${branch.id}`}
+                                                                    className="h-10 w-full"
+                                                                >
+                                                                    <SelectValue />
+                                                                </SelectTrigger>
+                                                                <SelectContent>
+                                                                    {branch.type !==
+                                                                    'deny' ? (
+                                                                        <SelectItem value="next">
+                                                                            Next
+                                                                            workflow
+                                                                            step
+                                                                        </SelectItem>
+                                                                    ) : null}
+                                                                    {branch.type !==
+                                                                    'approve' ? (
+                                                                        <SelectItem value="end">
+                                                                            End
+                                                                            this
+                                                                            path
+                                                                        </SelectItem>
+                                                                    ) : null}
+                                                                    {actions
+                                                                        .filter(
+                                                                            (
+                                                                                action,
+                                                                            ) => {
+                                                                                if (
+                                                                                    action.id ===
+                                                                                    actionId
+                                                                                ) {
+                                                                                    return false;
+                                                                                }
+
+                                                                                if (
+                                                                                    branch.type !==
+                                                                                        'approve' &&
+                                                                                    branch.type !==
+                                                                                        'deny'
+                                                                                ) {
+                                                                                    return true;
+                                                                                }
+
+                                                                                const otherType =
+                                                                                    branch.type ===
+                                                                                    'approve'
+                                                                                        ? 'deny'
+                                                                                        : 'approve';
+                                                                                const otherDestination =
+                                                                                    values.decision_branches.find(
+                                                                                        (
+                                                                                            item,
+                                                                                        ) =>
+                                                                                            item.type ===
+                                                                                            otherType,
+                                                                                    )?.destination;
+
+                                                                                return (
+                                                                                    otherDestination !==
+                                                                                    `action:${action.id}`
+                                                                                );
+                                                                            },
+                                                                        )
+                                                                        .map(
+                                                                            (
+                                                                                action,
+                                                                            ) => (
+                                                                                <SelectItem
+                                                                                    key={
+                                                                                        action.id
+                                                                                    }
+                                                                                    value={`action:${action.id}`}
+                                                                                >
+                                                                                    {
+                                                                                        action.name
+                                                                                    }
+                                                                                </SelectItem>
+                                                                            ),
+                                                                        )}
+                                                                </SelectContent>
+                                                            </Select>
+                                                        </div>
+                                                    </div>
+                                                ),
+                                            )}
+                                        </div>
                                     </div>
-                                    <Button
-                                        type="button"
-                                        variant="secondary"
-                                        size="icon"
-                                        onClick={addReviewerGroup}
-                                        aria-label="Add reviewer group"
-                                        title="Add reviewer group"
-                                    >
-                                        <Plus className="size-4" />
-                                    </Button>
+                                </section>
+                                {values.decision_mode === 'custom' ? (
+                                    <p className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                                        Proposals follow these custom outcome
+                                        routes when a reviewer completes this
+                                        action.
+                                    </p>
+                                ) : null}
+                            </div>
+                        ) : null}
+
+                        <section className="grid gap-5 border-t border-border pt-6">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                    <Label className="text-sm">
+                                        {values.action_type === 'submit'
+                                            ? 'Submission assignments'
+                                            : 'Reviewer groups'}
+                                    </Label>
+                                    <p className="mt-1.5 text-sm text-muted-foreground">
+                                        {values.action_type === 'submit'
+                                            ? 'Assign a role to the files required for this action.'
+                                            : 'Choose who reviews this action and which documents they need.'}
+                                    </p>
                                 </div>
-                                {values.reviewer_groups.length ? (
-                                    <div className="grid max-h-96 gap-3 overflow-y-auto pr-1">
-                                        {values.reviewer_groups.map((group, index) => (
-                                            <div key={group.id} className="grid gap-3 rounded-md border border-border bg-background p-3">
-                                                <div className="flex items-center gap-2">
+                                <Button
+                                    type="button"
+                                    variant="secondary"
+                                    size="sm"
+                                    className="shrink-0"
+                                    onClick={addReviewerGroup}
+                                    aria-label={
+                                        values.action_type === 'submit'
+                                            ? 'Add assignment'
+                                            : 'Add reviewer group'
+                                    }
+                                    title={
+                                        values.action_type === 'submit'
+                                            ? 'Add assignment'
+                                            : 'Add reviewer group'
+                                    }
+                                >
+                                    <Plus className="size-4" />
+                                    {values.action_type === 'submit'
+                                        ? 'Add assignment'
+                                        : 'Add reviewer group'}
+                                </Button>
+                            </div>
+                            {values.reviewer_groups.length ? (
+                                <div className="grid gap-4">
+                                    {values.reviewer_groups.map(
+                                        (group, index) => (
+                                            <div
+                                                key={group.id}
+                                                className="grid gap-4 rounded-xl border border-border bg-background p-4 sm:p-5"
+                                            >
+                                                <div className="flex items-center gap-3">
                                                     <Input
                                                         value={group.name}
-                                                        onChange={(event) => updateReviewerGroup(group.id, { name: event.target.value })}
-                                                        aria-label={`Reviewer group ${index + 1} name`}
-                                                        className="h-8"
+                                                        onChange={(event) =>
+                                                            updateReviewerGroup(
+                                                                group.id,
+                                                                {
+                                                                    name: event
+                                                                        .target
+                                                                        .value,
+                                                                },
+                                                            )
+                                                        }
+                                                        aria-label={`Assignment ${index + 1} name`}
+                                                        className="h-9"
                                                     />
                                                     <Button
                                                         type="button"
                                                         variant="ghost"
                                                         size="icon"
-                                                        onClick={() => removeReviewerGroup(group.id)}
+                                                        onClick={() =>
+                                                            removeReviewerGroup(
+                                                                group.id,
+                                                            )
+                                                        }
                                                         aria-label={`Remove ${group.name}`}
-                                                        title="Remove reviewer group"
-                                                        className="border border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                                        title={
+                                                            values.action_type ===
+                                                            'submit'
+                                                                ? 'Remove assignment'
+                                                                : 'Remove reviewer group'
+                                                        }
+                                                        className="size-9 border border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive"
                                                     >
                                                         <Trash2 className="size-4" />
                                                     </Button>
                                                 </div>
-                                                <div className="grid gap-3 md:grid-cols-2">
-                                                    <div className="grid gap-2">
-                                                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Role</p>
+                                                <div className="grid gap-4 md:grid-cols-2">
+                                                    <div className="grid gap-2.5">
+                                                        <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                                                            Role
+                                                        </p>
                                                         <SearchableMultiSelect
                                                             label="Interchangeable roles"
                                                             items={roles}
-                                                            selectedIds={group.roleIds}
-                                                            onToggle={(roleId) => updateReviewerGroup(group.id, {
-                                                                roleIds: group.roleIds.includes(roleId) ? [] : [roleId],
-                                                            })}
+                                                            selectedIds={
+                                                                group.roleIds
+                                                            }
+                                                            onToggle={(
+                                                                roleId,
+                                                            ) =>
+                                                                updateReviewerGroup(
+                                                                    group.id,
+                                                                    {
+                                                                        roleIds:
+                                                                            group.roleIds.includes(
+                                                                                roleId,
+                                                                            )
+                                                                                ? []
+                                                                                : [
+                                                                                      roleId,
+                                                                                  ],
+                                                                    },
+                                                                )
+                                                            }
                                                             placeholder="Choose interchangeable roles"
                                                             openDirection="up"
                                                             singleSelect
                                                         />
                                                     </div>
-                                                    <div className="grid gap-2">
-                                                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Documents</p>
+                                                    <div className="grid gap-2.5">
+                                                        <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                                                            Documents
+                                                        </p>
                                                         <SearchableMultiSelect
                                                             label="Documents for this group"
                                                             items={documents}
-                                                            selectedIds={group.documentIds}
-                                                            onToggle={(documentId) => toggleGroupDocument(group, documentId)}
+                                                            selectedIds={
+                                                                group.documentIds
+                                                            }
+                                                            onToggle={(
+                                                                documentId,
+                                                            ) =>
+                                                                toggleGroupDocument(
+                                                                    group,
+                                                                    documentId,
+                                                                )
+                                                            }
                                                             placeholder="Choose optional documents"
                                                             openDirection="up"
                                                         />
                                                     </div>
                                                 </div>
                                             </div>
-                                        ))}
-                                    </div>
-                                ) : (
-                                    <div className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">
-                                        Add a reviewer group, then choose interchangeable staff roles. Assigning documents is optional.
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    ) : null}
-                    <DialogFooter>
+                                        ),
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="rounded-lg border border-dashed border-border p-5 text-sm leading-relaxed text-muted-foreground">
+                                    {values.action_type === 'submit'
+                                        ? 'Add an assignment, then choose a role and the documents it needs.'
+                                        : 'Add a reviewer group, then choose a role and the documents it needs.'}
+                                </div>
+                            )}
+                        </section>
+                    </div>
+                    <DialogFooter className="shrink-0 border-t border-border bg-background px-6 py-4">
                         <DialogClose asChild>
                             <Button variant="secondary" type="button">
                                 Cancel

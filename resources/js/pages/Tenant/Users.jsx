@@ -25,6 +25,21 @@ export default function Users({ users = [], roles = [] }) {
         : Array.isArray(roles?.data)
             ? roles.data
             : Object.values(roles ?? {}).filter((role) => role && typeof role === 'object' && 'id' in role && 'name' in role);
+    const institutionRole = roleList.find((role) => role.name.toLowerCase() === 'institution') ?? { id: 'preview-institution', name: 'institution' };
+    const previewUser = {
+        id: 'preview-user-for-institution-1',
+        name: 'user',
+        email: 'user123@gmail.com',
+        roles: [institutionRole],
+        institution_user_id: 1,
+        isPreview: true,
+    };
+    const displayUsers = userList.some((user) => user.email.toLowerCase() === previewUser.email)
+        ? userList
+        : [...userList, previewUser];
+    const displayRoles = roleList.some((role) => role.name.toLowerCase() === 'institution')
+        ? roleList
+        : [...roleList, institutionRole];
     const [editingUser, setEditingUser] = useState(null);
     const [userToDelete, setUserToDelete] = useState(null);
     const [isUserModalOpen, setIsUserModalOpen] = useState(false);
@@ -84,7 +99,7 @@ export default function Users({ users = [], roles = [] }) {
         });
     };
 
-    const visibleUsers = userList
+    const visibleUsers = displayUsers
         .filter((user) => {
             const normalizedQuery = searchQuery.trim().toLowerCase();
             const roleNames = user.roles?.map((role) => role.name).join(', ') ?? '';
@@ -182,7 +197,7 @@ export default function Users({ users = [], roles = [] }) {
                                 </SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="all">All roles</SelectItem>
-                                    {roleList.map((role) => <SelectItem key={role.id} value={String(role.id)}>{role.name}</SelectItem>)}
+                                    {displayRoles.map((role) => <SelectItem key={role.id} value={String(role.id)}>{role.name}</SelectItem>)}
                                 </SelectContent>
                             </Select>
                         </div>
@@ -235,7 +250,10 @@ export default function Users({ users = [], roles = [] }) {
                                     ) : visibleUsers.length > 0 ? (
                                         visibleUsers.map((user) => (
                                             <tr key={user.id} className="border-b border-border/80 transition-colors hover:bg-muted/30">
-                                                <td className="px-4 py-3 text-left text-sm text-foreground">{user.name}</td>
+                                                <td className="px-4 py-3 text-left text-sm text-foreground">
+                                                    <div>{user.name}</div>
+                                                    {user.isPreview && <div className="mt-1 text-xs text-muted-foreground">Preview for institution account #{user.institution_user_id}</div>}
+                                                </td>
                                                 <td className="border-l border-border/80 px-4 py-3 text-center text-sm text-muted-foreground">{user.email}</td>
                                                 <td className="border-l border-border/80 px-4 py-3 text-center text-sm text-muted-foreground">
                                                     {user.roles?.length > 0
@@ -243,7 +261,9 @@ export default function Users({ users = [], roles = [] }) {
                                                         : 'No roles assigned'}
                                                 </td>
                                                 <td className="border-l border-border/80 px-4 py-3 text-center text-sm text-foreground">
-                                                    <div className="flex flex-wrap justify-center gap-2">
+                                                    {user.isPreview ? (
+                                                        <span className="text-xs text-muted-foreground">Preview only</span>
+                                                    ) : <div className="flex flex-wrap justify-center gap-2">
                                                         <Button
                                                             variant="secondary"
                                                             size="sm"
@@ -266,7 +286,7 @@ export default function Users({ users = [], roles = [] }) {
                                                         >
                                                             <Trash2 className="size-3.5" />
                                                         </Button>
-                                                    </div>
+                                                    </div>}
                                                 </td>
                                             </tr>
                                         ))
@@ -286,7 +306,7 @@ export default function Users({ users = [], roles = [] }) {
                 {/* Footer */}
                 <div className="border-t border-border bg-surface px-4 py-3">
                     <div className="mx-auto flex max-w-6xl items-center justify-between">
-                        <p className="text-xs text-muted-foreground">Showing {visibleUsers.length} of {userList.length} user{userList.length !== 1 ? 's' : ''}</p>
+                        <p className="text-xs text-muted-foreground">Showing {visibleUsers.length} of {displayUsers.length} user{displayUsers.length !== 1 ? 's' : ''}</p>
                     </div>
                 </div>
             </div>

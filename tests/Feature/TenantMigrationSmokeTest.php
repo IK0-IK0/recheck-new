@@ -2,7 +2,7 @@
 
 use Illuminate\Support\Facades\Schema;
 
-test('all 9 tenant tables exist after running tenant migrations', function () {
+test('proposal workflow persistence tables exist after tenant migrations', function () {
     $expectedTables = [
         'users',
         'roles',
@@ -13,12 +13,21 @@ test('all 9 tenant tables exist after running tenant migrations', function () {
         'phases',
         'actions',
         'documents',
+        'proposals',
+        'proposal_documents',
+        'proposal_phase_transitions',
     ];
 
     foreach ($expectedTables as $table) {
         expect(Schema::connection('tenant')->hasTable($table))
             ->toBeTrue("Expected tenant table [{$table}] to exist");
     }
+});
+
+test('proposal documents record their phase and required document', function () {
+    $columns = Schema::connection('tenant')->getColumnListing('proposal_documents');
+
+    expect($columns)->toContain('phase_id', 'required_document_id');
 });
 
 test('users table has theme_color column with default zinc', function () {
