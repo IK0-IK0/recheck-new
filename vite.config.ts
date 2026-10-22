@@ -12,7 +12,7 @@ export default defineConfig({
             input: ['resources/css/app.css', 'resources/js/app.tsx'],
             refresh: true,
             fonts: [
-                bunny('Instrument Sans', {
+                bunny('Plus Jakarta Sans', {
                     weights: [400, 500, 600],
                 }),
             ],
