@@ -217,6 +217,7 @@ test('uploaded proposal documents persist their required phase and document', fu
     $phase = Phase::factory()->for($process)->create();
     $action = Action::factory()->for($phase)->create();
     $requiredDocument = Document::factory()->create([
+        'name' => 'Application form',
         'label' => 'form',
         'file_type' => 'application/pdf',
     ]);
@@ -235,7 +236,6 @@ test('uploaded proposal documents persist their required phase and document', fu
             '/tenant/proposals/'.$proposal->id.'/documents',
             'POST',
             [
-                'name' => 'Completed application form',
                 'phase_id' => $phase->id,
                 'required_document_id' => $requiredDocument->id,
                 'action_id' => $action->id,
@@ -249,12 +249,72 @@ test('uploaded proposal documents persist their required phase and document', fu
 
     $uploadedDocument = $proposal->documents()->firstOrFail();
 
-    expect($uploadedDocument->name)->toBe('Completed application form')
+    expect($uploadedDocument->name)->toBe('Application form')
         ->and($uploadedDocument->label)->toBe('form')
         ->and((int) $uploadedDocument->pivot->phase_id)->toBe($phase->id)
         ->and((int) $uploadedDocument->pivot->required_document_id)->toBe($requiredDocument->id)
         ->and((int) $uploadedDocument->pivot->action_id)->toBe($action->id)
         ->and(Storage::disk('local')->allFiles('proposals/'.$proposal->id.'/documents'))->toHaveCount(1);
+});
+
+test('proposal owners can replace an uploaded required document without creating a duplicate', function () {
+    Storage::fake('local');
+
+    $process = Process::factory()->create();
+    $phase = Phase::factory()->for($process)->create();
+    $action = Action::factory()->for($phase)->create();
+    $requiredDocument = Document::factory()->create([
+        'name' => 'Application form',
+        'label' => 'form',
+        'file_type' => 'application/pdf',
+    ]);
+    $action->documents()->attach($requiredDocument);
+    $proposal = Proposal::create([
+        'title' => 'Research proposal',
+        'user_id' => 1,
+        'user_type' => User::class,
+        'institution_id' => 1,
+        'process_id' => $process->id,
+        'current_phase_id' => $phase->id,
+        'current_action_id' => $action->id,
+    ]);
+    $oldFilePath = 'proposals/'.$proposal->id.'/documents/old.pdf';
+    Storage::disk('local')->put($oldFilePath, 'old file contents');
+    $uploadedDocument = Document::factory()->create([
+        'name' => $requiredDocument->name,
+        'file_path' => $oldFilePath,
+        'file_type' => 'application/pdf',
+        'storage_driver' => 'local',
+    ]);
+    $proposal->documents()->attach($uploadedDocument->id, [
+        'phase_id' => $phase->id,
+        'required_document_id' => $requiredDocument->id,
+        'action_id' => $action->id,
+    ]);
+    $request = proposalRequestAsOwner(
+        Request::create(
+            '/tenant/proposals/'.$proposal->id.'/documents',
+            'POST',
+            [
+                'phase_id' => $phase->id,
+                'required_document_id' => $requiredDocument->id,
+                'action_id' => $action->id,
+                'replace_document_id' => $uploadedDocument->id,
+            ],
+            [],
+            ['file' => UploadedFile::fake()->create('replacement.pdf', 20, 'application/pdf')],
+        ),
+    );
+
+    app(ProposalController::class)->storeDocument($request, $proposal);
+
+    $replacement = $proposal->documents()->firstOrFail();
+
+    expect($proposal->documents()->count())->toBe(1)
+        ->and($replacement->id)->toBe($uploadedDocument->id)
+        ->and($replacement->file_path)->not->toBe($oldFilePath)
+        ->and(Storage::disk('local')->exists($oldFilePath))->toBeFalse()
+        ->and(Storage::disk('local')->exists($replacement->file_path))->toBeTrue();
 });
 
 test('proposal upload derives document type and rejects files that do not match the required type', function () {

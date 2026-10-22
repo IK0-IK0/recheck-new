@@ -8,12 +8,16 @@ use App\Models\Phase;
 use App\Models\Process;
 use App\Models\Proposal;
 use App\Models\StorageConfig;
+use Aws\S3\S3Client;
+use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 use Throwable;
@@ -21,19 +25,25 @@ use Throwable;
 class ProposalController extends Controller
 {
     /**
-     * Get the currently active storage disk.
+     * @return array{driver: string, disk: FilesystemAdapter}
      */
-    private function getStorageDisk(): string
+    private function getStorageDisk(?string $driver = null): array
     {
         $activeConfig = StorageConfig::activeForCurrentUser();
 
-        if (! $activeConfig) {
-            return 'local'; // Fallback to local if no config
+        if ($activeConfig && ($driver === null || $activeConfig->driver === $driver)) {
+            return [
+                'driver' => $activeConfig->driver,
+                'disk' => Storage::build($activeConfig->toFilesystemConfig()),
+            ];
         }
 
-        $diskConfig = $activeConfig->toFilesystemConfig();
+        $driver ??= 'local';
 
-        return $diskConfig['driver']; // Returns 'local', 's3', or 'supabase'
+        return [
+            'driver' => $driver,
+            'disk' => Storage::disk($driver),
+        ];
     }
 
     public function index(Request $request): Response
@@ -76,6 +86,7 @@ class ProposalController extends Controller
         return Inertia::render('Tenant/Proposals/Index', [
             'proposals' => $proposals,
             'isTracking' => $isTracking,
+            'currentStorageDriver' => StorageConfig::activeForCurrentUser()?->driver ?? 'local',
             'viewerId' => $request->user()->getKey(),
             'viewerType' => $request->user()::class,
             'selectedProposalId' => is_int($requestedProposalId) && $proposals->contains('id', $requestedProposalId)
@@ -185,23 +196,32 @@ class ProposalController extends Controller
 
         $validated = $request->validate([
             'file' => ['required', 'file', 'max:10240'], // 10MB max
-            'name' => ['required', 'string', 'max:255'],
+            'name' => ['required_without:required_document_id', 'string', 'max:255'],
             'label' => ['nullable', 'in:form,doc'],
             'phase_id' => ['nullable', 'integer'],
             'required_document_id' => ['nullable', 'integer'],
             'action_id' => ['nullable', 'integer'],
+            'replace_document_id' => ['nullable', 'integer'],
         ]);
 
         $uploadedFile = $request->file('file');
+        $name = $validated['name'] ?? null;
         $label = $validated['label'] ?? 'doc';
         $phaseId = $validated['phase_id'] ?? null;
         $requiredDocumentId = $validated['required_document_id'] ?? null;
         $actionId = $validated['action_id'] ?? null;
+        $replaceDocumentId = $validated['replace_document_id'] ?? null;
         $phase = null;
 
         if (($phaseId === null) !== ($requiredDocumentId === null)) {
             return redirect()->back()->withErrors([
                 'phase_id' => 'A phase and its required document must be submitted together.',
+            ]);
+        }
+
+        if ($replaceDocumentId !== null && ($phaseId === null || $requiredDocumentId === null)) {
+            return redirect()->back()->withErrors([
+                'replace_document_id' => 'Only a workflow-required proposal file can be replaced.',
             ]);
         }
 
@@ -246,6 +266,7 @@ class ProposalController extends Controller
             }
 
             $requiredDocument = Document::query()->findOrFail($requiredDocumentId);
+            $name = $requiredDocument->name;
             $label = $requiredDocument->label;
 
             if (str_contains($requiredDocument->file_type, '/')
@@ -271,33 +292,51 @@ class ProposalController extends Controller
             }
         }
 
+        $documentToReplace = $replaceDocumentId !== null
+            ? $this->findProposalDocumentForReplacement(
+                $proposal,
+                (int) $replaceDocumentId,
+                (int) $phaseId,
+                (int) $requiredDocumentId,
+            )
+            : null;
+
         $storageDriver = 'unknown';
 
         try {
-            $storageDriver = $this->getStorageDisk();
+            $storage = $this->getStorageDisk();
+            $storageDriver = $storage['driver'];
 
             if ($uploadedFile) {
-                $filePath = $uploadedFile->store('proposals/'.$proposal->id.'/documents', $storageDriver);
+                $filePath = $storage['disk']->putFile('proposals/'.$proposal->id.'/documents', $uploadedFile);
 
                 if (! is_string($filePath)) {
                     throw new \RuntimeException('The storage disk did not return a file path after upload.');
                 }
 
-                $document = Document::create([
-                    'name' => $validated['name'],
-                    'file_path' => $filePath,
-                    'file_type' => $uploadedFile->getMimeType(),
-                    'label' => $label,
-                    'storage_driver' => $storageDriver,
-                ]);
+                if ($documentToReplace) {
+                    $this->replaceProposalDocumentFile(
+                        $documentToReplace,
+                        $filePath,
+                        $uploadedFile->getMimeType() ?? 'application/octet-stream',
+                        $storageDriver,
+                    );
+                } else {
+                    $document = Document::create([
+                        'name' => $name,
+                        'file_path' => $filePath,
+                        'file_type' => $uploadedFile->getMimeType(),
+                        'label' => $label,
+                        'storage_driver' => $storageDriver,
+                    ]);
 
-                // Attach to proposal
-                $pivotData = $phase ? [
-                    'phase_id' => $phase->id,
-                    'required_document_id' => $requiredDocumentId,
-                    'action_id' => $actionId,
-                ] : [];
-                $proposal->documents()->attach($document->id, $pivotData);
+                    $pivotData = $phase ? [
+                        'phase_id' => $phase->id,
+                        'required_document_id' => $requiredDocumentId,
+                        'action_id' => $actionId,
+                    ] : [];
+                    $proposal->documents()->attach($document->id, $pivotData);
+                }
 
                 return redirect()->back();
             }
@@ -322,6 +361,341 @@ class ProposalController extends Controller
         }
     }
 
+    public function directUploadUrl(Request $request, Proposal $proposal): JsonResponse
+    {
+        $this->authorizeProposalOwner($request, $proposal);
+
+        $validated = $request->validate([
+            'file_name' => ['required', 'string', 'max:255'],
+            'content_type' => ['required', 'string', 'max:255'],
+            'file_size' => ['required', 'integer', 'min:1', 'max:10485760'],
+            'phase_id' => ['required', 'integer'],
+            'required_document_id' => ['required', 'integer'],
+            'action_id' => ['nullable', 'integer'],
+            'replace_document_id' => ['nullable', 'integer'],
+        ]);
+
+        $this->validateRequiredDocumentUpload(
+            $proposal,
+            (int) $validated['phase_id'],
+            (int) $validated['required_document_id'],
+            isset($validated['action_id']) ? (int) $validated['action_id'] : null,
+            $validated['content_type'],
+        );
+
+        $documentToReplace = isset($validated['replace_document_id'])
+            ? $this->findProposalDocumentForReplacement(
+                $proposal,
+                (int) $validated['replace_document_id'],
+                (int) $validated['phase_id'],
+                (int) $validated['required_document_id'],
+            )
+            : null;
+
+        $reference = (string) Str::uuid();
+        $storageDriver = 's3';
+
+        try {
+            $config = StorageConfig::activeForCurrentUser();
+
+            if (! $config) {
+                return response()->json(['error' => 'No active storage configuration was found.'], 422);
+            }
+
+            if ($config->driver !== 's3') {
+                return response()->json(['error' => 'Direct uploads require S3-compatible storage.'], 422);
+            }
+
+            $extension = preg_replace('/[^A-Za-z0-9]/', '', pathinfo($validated['file_name'], PATHINFO_EXTENSION));
+            $path = 'proposals/'.$proposal->id.'/documents/'.$reference.($extension ? '.'.$extension : '');
+            $client = new S3Client([
+                'version' => 'latest',
+                'region' => $config->region ?? 'us-east-1',
+                'endpoint' => $config->endpoint,
+                'credentials' => ['key' => $config->access_key, 'secret' => $config->secret_key],
+                'use_path_style_endpoint' => true,
+            ]);
+            $command = $client->getCommand('PutObject', [
+                'Bucket' => $config->bucket,
+                'Key' => $path,
+                'ContentType' => $validated['content_type'],
+            ]);
+
+            return response()->json([
+                'url' => (string) $client->createPresignedRequest($command, '+10 minutes')->getUri(),
+                'path' => $path,
+                'reference' => $reference,
+            ]);
+        } catch (Throwable $exception) {
+            report($exception);
+            Log::error('proposal_direct_upload_url_failed', [
+                'proposal_id' => $proposal->id,
+                'reference' => $reference,
+                'storage_driver' => $storageDriver,
+                'exception' => $exception::class,
+                'exception_message' => $exception->getMessage(),
+            ]);
+
+            return response()->json([
+                'error' => "Storage service could not prepare the upload. (Reference: {$reference})",
+            ], 500);
+        }
+    }
+
+    public function completeDirectUpload(Request $request, Proposal $proposal): JsonResponse
+    {
+        $this->authorizeProposalOwner($request, $proposal);
+
+        $validated = $request->validate([
+            'content_type' => ['required', 'string', 'max:255'],
+            'file_size' => ['required', 'integer', 'min:1', 'max:10485760'],
+            'path' => ['required', 'string', 'max:1024'],
+            'reference' => ['required', 'uuid'],
+            'phase_id' => ['required', 'integer'],
+            'required_document_id' => ['required', 'integer'],
+            'action_id' => ['nullable', 'integer'],
+            'replace_document_id' => ['nullable', 'integer'],
+        ]);
+
+        $this->validateRequiredDocumentUpload(
+            $proposal,
+            (int) $validated['phase_id'],
+            (int) $validated['required_document_id'],
+            isset($validated['action_id']) ? (int) $validated['action_id'] : null,
+            $validated['content_type'],
+        );
+
+        $documentToReplace = isset($validated['replace_document_id'])
+            ? $this->findProposalDocumentForReplacement(
+                $proposal,
+                (int) $validated['replace_document_id'],
+                (int) $validated['phase_id'],
+                (int) $validated['required_document_id'],
+            )
+            : null;
+
+        $reference = $validated['reference'];
+        $pathPrefix = 'proposals/'.$proposal->id.'/documents/'.$reference;
+        $pathSuffix = substr($validated['path'], strlen($pathPrefix));
+
+        if (! str_starts_with($validated['path'], $pathPrefix)
+            || ($pathSuffix !== '' && ! preg_match('/\A\.[A-Za-z0-9]{1,12}\z/', $pathSuffix))) {
+            return response()->json(['error' => 'The uploaded file path is invalid.'], 422);
+        }
+
+        $storageDriver = 's3';
+        $disk = null;
+
+        try {
+            $config = StorageConfig::activeForCurrentUser();
+
+            if (! $config) {
+                return response()->json(['error' => 'No active storage configuration was found.'], 422);
+            }
+
+            if ($config->driver !== 's3') {
+                return response()->json(['error' => 'Direct uploads require S3-compatible storage.'], 422);
+            }
+
+            $storageDriver = $config->driver;
+            $disk = Storage::build($config->toFilesystemConfig());
+
+            if (! $disk->exists($validated['path'])) {
+                return response()->json(['error' => 'The direct upload was not found in storage.'], 404);
+            }
+
+            if ($disk->size($validated['path']) !== (int) $validated['file_size']) {
+                $disk->delete($validated['path']);
+
+                return response()->json(['error' => 'The uploaded file size does not match the requested size.'], 422);
+            }
+
+            $requiredDocument = Document::query()->findOrFail($validated['required_document_id']);
+
+            if ($documentToReplace) {
+                $this->replaceProposalDocumentFile(
+                    $documentToReplace,
+                    $validated['path'],
+                    $validated['content_type'],
+                    $storageDriver,
+                );
+            } else {
+                $document = Document::create([
+                    'name' => $requiredDocument->name,
+                    'file_path' => $validated['path'],
+                    'file_type' => $validated['content_type'],
+                    'label' => $requiredDocument->label,
+                    'storage_driver' => $storageDriver,
+                ]);
+                $proposal->documents()->attach($document->id, [
+                    'phase_id' => $validated['phase_id'],
+                    'required_document_id' => $requiredDocument->id,
+                    'action_id' => $validated['action_id'] ?? null,
+                ]);
+            }
+
+            return response()->json(['message' => 'Proposal file uploaded.']);
+        } catch (Throwable $exception) {
+            report($exception);
+
+            Log::error('proposal_direct_upload_completion_failed', [
+                'proposal_id' => $proposal->id,
+                'reference' => $reference,
+                'path' => $validated['path'],
+                'storage_driver' => $storageDriver,
+                'exception' => $exception::class,
+                'exception_message' => $exception->getMessage(),
+            ]);
+
+            return response()->json([
+                'error' => "Storage service could not complete the upload. (Reference: {$reference})",
+            ], 500);
+        }
+    }
+
+    /**
+     * @return array{phase: Phase, document: Document}
+     */
+    private function validateRequiredDocumentUpload(
+        Proposal $proposal,
+        int $phaseId,
+        int $requiredDocumentId,
+        ?int $actionId,
+        string $contentType,
+    ): array {
+        $phase = Phase::query()
+            ->whereKey($phaseId)
+            ->where('process_id', $proposal->process_id)
+            ->first();
+
+        if (! $phase) {
+            throw ValidationException::withMessages([
+                'phase_id' => 'The selected phase is not part of this proposal workflow.',
+            ]);
+        }
+
+        $workflowPhases = Phase::query()
+            ->where('process_id', $proposal->process_id)
+            ->orderBy('order')
+            ->orderBy('id')
+            ->get();
+        $targetPhaseIndex = $workflowPhases->search(
+            fn (Phase $workflowPhase): bool => (int) $workflowPhase->id === (int) $phase->id
+        );
+        $currentPhaseIndex = $proposal->current_phase_id
+            ? $workflowPhases->search(
+                fn (Phase $workflowPhase): bool => (int) $workflowPhase->id === (int) $proposal->current_phase_id
+            )
+            : false;
+        $isPhaseAvailable = $currentPhaseIndex === false
+            ? $proposal->current_phase_id === null && $targetPhaseIndex === 0
+            : $targetPhaseIndex !== false && $targetPhaseIndex <= $currentPhaseIndex;
+
+        if (! $isPhaseAvailable) {
+            throw ValidationException::withMessages([
+                'phase_id' => 'Files can only be uploaded for the current or a completed phase.',
+            ]);
+        }
+
+        $requiredDocument = Document::query()->findOrFail($requiredDocumentId);
+        $documentIsRequiredForPhase = Action::query()
+            ->where('phase_id', $phase->id)
+            ->whereHas('documents', fn ($query) => $query->whereKey($requiredDocumentId))
+            ->exists();
+
+        if (! $documentIsRequiredForPhase) {
+            throw ValidationException::withMessages([
+                'required_document_id' => 'The selected document is not required for this phase.',
+            ]);
+        }
+
+        if (str_contains($requiredDocument->file_type, '/')
+            && strtolower($requiredDocument->file_type) !== strtolower($contentType)) {
+            throw ValidationException::withMessages([
+                'file' => "Upload a {$requiredDocument->file_type} file to match the required document.",
+            ]);
+        }
+
+        if ($actionId !== null) {
+            $actionIsCurrentRequirement = Action::query()
+                ->whereKey($actionId)
+                ->where('phase_id', $phase->id)
+                ->whereHas('documents', fn ($query) => $query->whereKey($requiredDocumentId))
+                ->whereKey($proposal->current_action_id)
+                ->exists();
+
+            if (! $actionIsCurrentRequirement) {
+                throw ValidationException::withMessages([
+                    'action_id' => 'The selected document is not required by the current workflow action.',
+                ]);
+            }
+        }
+
+        return ['phase' => $phase, 'document' => $requiredDocument];
+    }
+
+    private function findProposalDocumentForReplacement(
+        Proposal $proposal,
+        int $documentId,
+        int $phaseId,
+        int $requiredDocumentId,
+    ): Document {
+        $document = $proposal->documents()
+            ->whereKey($documentId)
+            ->wherePivot('phase_id', $phaseId)
+            ->wherePivot('required_document_id', $requiredDocumentId)
+            ->first();
+
+        if (! $document) {
+            throw ValidationException::withMessages([
+                'replace_document_id' => 'The selected file is not attached to this proposal requirement.',
+            ]);
+        }
+
+        return $document;
+    }
+
+    private function replaceProposalDocumentFile(
+        Document $document,
+        string $filePath,
+        string $fileType,
+        string $storageDriver,
+    ): void {
+        $previousPath = $document->file_path;
+        $previousStorageDriver = $document->storage_driver ?? 'local';
+
+        $document->update([
+            'file_path' => $filePath,
+            'file_type' => $fileType,
+            'storage_driver' => $storageDriver,
+        ]);
+
+        if ($previousPath === $filePath && $previousStorageDriver === $storageDriver) {
+            return;
+        }
+
+        try {
+            $previousStorage = $this->getStorageDisk($previousStorageDriver);
+
+            if (! $previousStorage['disk']->delete($previousPath)) {
+                Log::warning('proposal_replaced_file_cleanup_failed', [
+                    'document_id' => $document->id,
+                    'storage_driver' => $previousStorageDriver,
+                    'file_path' => $previousPath,
+                ]);
+            }
+        } catch (Throwable $exception) {
+            report($exception);
+            Log::warning('proposal_replaced_file_cleanup_failed', [
+                'document_id' => $document->id,
+                'storage_driver' => $previousStorageDriver,
+                'file_path' => $previousPath,
+                'exception' => $exception::class,
+                'exception_message' => $exception->getMessage(),
+            ]);
+        }
+    }
+
     /**
      * Delete a document from a proposal.
      */
@@ -335,8 +709,8 @@ class ProposalController extends Controller
 
             // Optionally, delete the actual file and document record if it's not used elsewhere
             if ($document->proposals()->count() === 0 && $document->actions()->count() === 0) {
-                $disk = Storage::disk($document->storage_driver ?? 'local');
-                $disk->delete($document->file_path);
+                $storage = $this->getStorageDisk($document->storage_driver ?? 'local');
+                $storage['disk']->delete($document->file_path);
                 $document->delete();
             }
         }

@@ -8,9 +8,15 @@ import {
     ClipboardList,
     FileText,
     GitBranch,
+    History,
     Loader2,
+    LoaderCircle,
     Plus,
+    Eye,
+    RefreshCw,
+    Send,
     Upload,
+    Zap,
 } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -70,7 +76,6 @@ type Proposal = {
     process: Process | null;
     current_phase: Phase | null;
     current_action: PhaseAction | null;
-    can_review?: boolean;
     completed_at: string | null;
     created_at: string;
     phase_transitions: {
@@ -87,6 +92,7 @@ type Proposal = {
     documents: {
         id: number;
         name: string;
+        file_type: string;
         pivot: {
             phase_id: number | null;
             required_document_id: number | null;
@@ -98,6 +104,7 @@ type Proposal = {
 type Props = {
     proposals: Proposal[];
     isTracking: boolean;
+    currentStorageDriver: string;
     viewerId: number;
     viewerType: string;
     selectedProposalId: number | null;
@@ -105,14 +112,78 @@ type Props = {
 
 const MAX_PROPOSALS = 3;
 
+const readUploadResponse = async (
+    response: Response,
+): Promise<Record<string, unknown>> => {
+    const responseText = await response.text();
+
+    try {
+        return responseText ? JSON.parse(responseText) : {};
+    } catch {
+        throw new Error(
+            `The server returned an unexpected response (HTTP ${response.status}).`,
+        );
+    }
+};
+
+const uploadFileWithProgress = (
+    url: string,
+    file: File,
+    onProgress: (progress: number) => void,
+): Promise<void> =>
+    new Promise((resolve, reject) => {
+        const request = new XMLHttpRequest();
+
+        request.open('PUT', url);
+        request.setRequestHeader(
+            'Content-Type',
+            file.type || 'application/octet-stream',
+        );
+        request.upload.addEventListener('progress', (event) => {
+            if (event.lengthComputable) {
+                onProgress(Math.round((event.loaded / event.total) * 100));
+            }
+        });
+        request.addEventListener('load', () => {
+            if (request.status >= 200 && request.status < 300) {
+                resolve();
+
+                return;
+            }
+
+            reject(
+                new Error(
+                    `Bucket upload returned HTTP ${request.status}. Check the bucket CORS policy.`,
+                ),
+            );
+        });
+        request.addEventListener('error', () =>
+            reject(
+                new Error(
+                    'The bucket upload failed. Check the bucket CORS policy.',
+                ),
+            ),
+        );
+        request.addEventListener('abort', () =>
+            reject(new Error('The bucket upload was cancelled.')),
+        );
+        request.send(file);
+    });
+
 export default function Index({
     proposals,
     isTracking,
+    currentStorageDriver,
     viewerId,
     viewerType,
     selectedProposalId,
 }: Props) {
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+    const [documentToView, setDocumentToView] =
+        useState<Proposal['documents'][number] | null>(null);
+    const [documentViewUrl, setDocumentViewUrl] = useState<string | null>(null);
+    const [isLoadingDocumentView, setIsLoadingDocumentView] = useState(false);
     const [isSwitchProposalModalOpen, setIsSwitchProposalModalOpen] =
         useState(false);
     const [proposalListTab, setProposalListTab] = useState<
@@ -245,24 +316,139 @@ export default function Index({
     const handleUploadRequiredFile = async (
         requiredDocumentId: number,
         documentName: string,
-        label: string,
-        name: string,
         files: File[],
+        replaceDocumentId?: number,
     ) => {
         if (!activeProposal || !selectedPhase || files.length === 0) {
             return false;
         }
 
         const formData = new FormData();
-        formData.append('file', files[0]);
-        formData.append('label', label);
-        formData.append('name', name);
         formData.append('phase_id', String(selectedPhase.id));
         formData.append('required_document_id', String(requiredDocumentId));
+        if (replaceDocumentId !== undefined) {
+            formData.append('replace_document_id', String(replaceDocumentId));
+        }
 
         if (activeAction) {
             formData.append('action_id', String(activeAction.id));
         }
+
+        if (currentStorageDriver === 's3') {
+            const file = files[0];
+            const csrfToken =
+                document
+                    .querySelector('meta[name="csrf-token"]')
+                    ?.getAttribute('content') || '';
+            const uploadMetadata = {
+                phase_id: selectedPhase.id,
+                required_document_id: requiredDocumentId,
+                ...(activeAction ? { action_id: activeAction.id } : {}),
+                ...(replaceDocumentId !== undefined
+                    ? { replace_document_id: replaceDocumentId }
+                    : {}),
+            };
+            setUploadProgress(0);
+
+            try {
+                const urlResponse = await fetch(
+                    `/tenant/proposals/${activeProposal.id}/documents/direct-upload-url`,
+                    {
+                        method: 'POST',
+                        headers: {
+                            Accept: 'application/json',
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': csrfToken,
+                        },
+                        body: JSON.stringify({
+                            ...uploadMetadata,
+                            file_name: file.name,
+                            file_size: file.size,
+                            content_type:
+                                file.type || 'application/octet-stream',
+                        }),
+                    },
+                );
+                const uploadData = await readUploadResponse(urlResponse);
+
+                if (!urlResponse.ok) {
+                    throw new Error(
+                        String(
+                            uploadData.error ||
+                                JSON.stringify(
+                                    uploadData.errors || uploadData,
+                                ),
+                        ),
+                    );
+                }
+
+                if (
+                    typeof uploadData.url !== 'string' ||
+                    typeof uploadData.path !== 'string' ||
+                    typeof uploadData.reference !== 'string'
+                ) {
+                    throw new Error(
+                        'The server did not return a valid direct upload response.',
+                    );
+                }
+
+                await uploadFileWithProgress(
+                    uploadData.url,
+                    file,
+                    setUploadProgress,
+                );
+
+                const completeResponse = await fetch(
+                    `/tenant/proposals/${activeProposal.id}/documents/complete-direct-upload`,
+                    {
+                        method: 'POST',
+                        headers: {
+                            Accept: 'application/json',
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': csrfToken,
+                        },
+                        body: JSON.stringify({
+                            ...uploadMetadata,
+                            content_type:
+                                file.type || 'application/octet-stream',
+                            file_size: file.size,
+                            path: uploadData.path,
+                            reference: uploadData.reference,
+                        }),
+                    },
+                );
+                const completeData =
+                    await readUploadResponse(completeResponse);
+
+                if (!completeResponse.ok) {
+                    throw new Error(
+                        String(
+                            completeData.error ||
+                                JSON.stringify(
+                                    completeData.errors || completeData,
+                                ),
+                        ),
+                    );
+                }
+
+                router.reload({ only: ['proposals'], preserveScroll: true });
+                toast.success(`${documentName} uploaded.`);
+
+                return true;
+            } catch (error) {
+                toast.error(
+                    error instanceof Error
+                        ? error.message
+                        : 'File upload failed.',
+                );
+
+                return false;
+            } finally {
+                setUploadProgress(null);
+            }
+        }
+
+        formData.append('file', files[0]);
 
         return new Promise<boolean>((resolve) =>
             router.post(
@@ -289,6 +475,42 @@ export default function Index({
                 },
             ),
         );
+    };
+
+    const handleViewProposalDocument = async (
+        uploadedDocument: Proposal['documents'][number],
+    ) => {
+        setDocumentToView(uploadedDocument);
+        setDocumentViewUrl(null);
+        setIsLoadingDocumentView(true);
+
+        try {
+            const response = await fetch(
+                `/tenant/documents/${uploadedDocument.id}/view-url`,
+                { headers: { Accept: 'application/json' } },
+            );
+            const data = (await response.json()) as {
+                url?: string;
+                error?: string;
+            };
+
+            if (!response.ok || !data.url) {
+                throw new Error(
+                    data.error || 'Unable to load document preview.',
+                );
+            }
+
+            setDocumentViewUrl(data.url);
+        } catch (error) {
+            setDocumentToView(null);
+            toast.error(
+                error instanceof Error
+                    ? error.message
+                    : 'Unable to load document preview.',
+            );
+        } finally {
+            setIsLoadingDocumentView(false);
+        }
     };
 
     const handleSubmitAction = () => {
@@ -319,32 +541,6 @@ export default function Index({
         );
     };
 
-    const handleReviewDecision = (decision: string) => {
-        if (
-            !activeProposal ||
-            !activeAction ||
-            activeAction.action_type !== 'review' ||
-            isAdvancing
-        ) {
-            return;
-        }
-
-        router.post(
-            `/tenant/proposals/${activeProposal.id}/review`,
-            { decision },
-            {
-                preserveScroll: true,
-                onStart: () => setIsAdvancing(true),
-                onFinish: () => setIsAdvancing(false),
-                onSuccess: () => toast.success('Review decision submitted.'),
-                onError: (reviewErrors) =>
-                    toast.error(
-                        reviewErrors.workflow ||
-                            'The review decision could not be submitted.',
-                    ),
-            },
-        );
-    };
     const handleCreate = (e: React.FormEvent) => {
         e.preventDefault();
         post('/tenant/proposals', {
@@ -513,8 +709,9 @@ export default function Index({
                             <div className="mt-6 grid grid-cols-1 items-stretch gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-2">
                                 <div className="flex flex-col gap-4 lg:min-h-0">
                                     <section className="flex flex-col rounded-lg border border-border bg-card p-5 lg:min-h-0 lg:flex-1">
-                                        <div className="flex h-8 items-center">
+                                        <div className="flex h-8 items-center border-b border-border pb-4">
                                             <h3 className="text-sm font-semibold">
+                                                <History className="mr-1.5 inline size-4 text-muted-foreground" />
                                                 History
                                             </h3>
                                         </div>
@@ -545,15 +742,25 @@ export default function Index({
                                 </div>
 
                                 <section className="flex min-w-0 flex-col rounded-lg border border-border bg-card p-5 lg:min-h-0">
-                                    <div className="flex h-8 items-center justify-between gap-3">
+                                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border pb-4">
                                         <h3 className="text-sm font-semibold">
-                                            {selectedPhaseName
-                                                ? `Actions · ${selectedPhaseName}${activeAction ? ` · ${activeAction.name}` : ''}`
-                                                : 'Actions'}
+                                            <Zap className="mr-1.5 inline size-4 text-muted-foreground" />
+                                            Actions
                                         </h3>
+                                        {activeAction ? (
+                                            <Badge variant="outline" className="gap-1.5">
+                                                {activeAction.action_type ===
+                                                'submit' ? (
+                                                    <Send className="size-3.5" />
+                                                ) : (
+                                                    <Eye className="size-3.5" />
+                                                )}
+                                                {activeAction.name}
+                                            </Badge>
+                                        ) : null}
                                     </div>
                                     {selectedPhase ? (
-                                        <div className="mt-5 flex flex-col gap-4 lg:min-h-0 lg:flex-1">
+                                        <div className="mt-4 flex flex-col gap-4 lg:min-h-0 lg:flex-1">
                                             {activeAction?.description ? (
                                                 <p className="text-sm text-muted-foreground">
                                                     {activeAction.description}
@@ -587,10 +794,18 @@ export default function Index({
                                                                         key={
                                                                             document.id
                                                                         }
-                                                                        className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2.5"
+                                                                        className={`flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 ${
+                                                                            submittedDocument
+                                                                                ? 'border-primary bg-primary/5'
+                                                                                : 'border-border'
+                                                                        }`}
                                                                     >
                                                                         <div className="flex min-w-0 items-center gap-3">
-                                                                            <FileText className="size-4 shrink-0 text-muted-foreground" />
+                                                                            {submittedDocument ? (
+                                                                                <CheckCircle2 className="size-4 shrink-0 text-primary" />
+                                                                            ) : (
+                                                                                <FileText className="size-4 shrink-0 text-muted-foreground" />
+                                                                            )}
                                                                             <div className="min-w-0">
                                                                                 <p className="truncate text-sm font-medium">
                                                                                     {
@@ -599,39 +814,61 @@ export default function Index({
                                                                                 </p>
                                                                                 <p className="truncate text-xs text-muted-foreground">
                                                                                     {submittedDocument
-                                                                                        ? `Uploaded: ${submittedDocument.name}`
+                                                                                        ? 'File uploaded'
                                                                                         : 'Not uploaded'}
                                                                                 </p>
                                                                             </div>
                                                                         </div>
-                                                                        {activeAction?.action_type ===
-                                                                        'review' ? null : (
+                                                                        <div className="flex shrink-0 items-center gap-1">
+                                                                            {submittedDocument ? (
+                                                                                <Button
+                                                                                    type="button"
+                                                                                    variant="ghost"
+                                                                                    size="icon"
+                                                                                    className="size-8 text-primary hover:text-primary"
+                                                                                    aria-label={`View ${document.name}`}
+                                                                                    title="View file"
+                                                                                    onClick={() =>
+                                                                                        handleViewProposalDocument(
+                                                                                            submittedDocument,
+                                                                                        )
+                                                                                    }
+                                                                                >
+                                                                                    <Eye className="size-3.5" />
+                                                                                </Button>
+                                                                            ) : null}
+                                                                            {activeAction?.action_type ===
+                                                                            'review' ? null : (
                                                                             <DocumentUploadModal
-                                                                                title={`Upload ${document.name}`}
-                                                                                description={`Upload the file required for ${activeAction?.name ?? selectedPhaseName}. Expected type: ${document.file_type}.`}
-                                                                                submitLabel="Upload file"
+                                                                                title={`${submittedDocument ? 'Replace' : 'Upload'} ${document.name}`}
+                                                                                description={`${submittedDocument ? 'Choose a replacement file' : 'Upload the file'} required for ${activeAction?.name ?? selectedPhaseName}.`}
+                                                                                submitLabel={submittedDocument ? 'Replace file' : 'Upload file'}
+                                                                                uploadProgress={
+                                                                                    uploadProgress
+                                                                                }
+                                                                                showName={
+                                                                                    false
+                                                                                }
                                                                                 showType={
                                                                                     false
+                                                                                }
+                                                                                expectedType={
+                                                                                    document.file_type
                                                                                 }
                                                                                 initialValues={{
                                                                                     name: document.name,
                                                                                     label: document.label,
                                                                                 }}
                                                                                 onSubmit={({
-                                                                                    name,
-                                                                                    label,
                                                                                     files,
                                                                                 }: {
-                                                                                    name: string;
-                                                                                    label: string;
                                                                                     files: File[];
                                                                                 }) =>
                                                                                     handleUploadRequiredFile(
                                                                                         document.id,
                                                                                         document.name,
-                                                                                        label,
-                                                                                        name,
                                                                                         files,
+                                                                                        submittedDocument?.id,
                                                                                     )
                                                                                 }
                                                                                 trigger={
@@ -639,14 +876,20 @@ export default function Index({
                                                                                         type="button"
                                                                                         variant="outline"
                                                                                         size="sm"
-                                                                                        className="shrink-0"
+                                                                                        className="size-8 shrink-0 p-0"
+                                                                                        aria-label={`${submittedDocument ? 'Replace' : 'Upload'} ${document.name}`}
+                                                                                        title={submittedDocument ? 'Replace file' : 'Upload file'}
                                                                                     >
-                                                                                        <Upload className="mr-1.5 size-3.5" />
-                                                                                        Upload
+                                                                                        {submittedDocument ? (
+                                                                                            <RefreshCw className="size-3.5" />
+                                                                                        ) : (
+                                                                                            <Upload className="size-3.5" />
+                                                                                        )}
                                                                                     </Button>
                                                                                 }
                                                                             />
-                                                                        )}
+                                                                            )}
+                                                                        </div>
                                                                     </li>
                                                                 );
                                                             },
@@ -659,42 +902,13 @@ export default function Index({
                                                     for this phase.
                                                 </p>
                                             )}
-                                            {activeAction &&
-                                            activeAction.action_type ===
-                                                'review' &&
-                                            !activeProposal.can_review ? (
+                                            {activeAction?.action_type ===
+                                            'review' ? (
                                                 <p className="rounded-md border border-dashed border-border px-3 py-5 text-center text-sm text-muted-foreground">
-                                                    Waiting for an assigned
-                                                    reviewer to complete this
-                                                    action.
+                                                    This action is awaiting
+                                                    review. Decisions are made
+                                                    from Tracking.
                                                 </p>
-                                            ) : null}
-                                            {uploadedDocuments.length > 0 ? (
-                                                <div>
-                                                    <p className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
-                                                        Files submitted for this
-                                                        phase
-                                                    </p>
-                                                    <ul className="custom-scrollbar space-y-2 lg:max-h-32 lg:overflow-y-auto lg:pr-1">
-                                                        {uploadedDocuments.map(
-                                                            (document) => (
-                                                                <li
-                                                                    key={
-                                                                        document.id
-                                                                    }
-                                                                    className="flex min-w-0 items-center gap-3 rounded-md border border-border px-3 py-2"
-                                                                >
-                                                                    <FileText className="size-4 shrink-0 text-muted-foreground" />
-                                                                    <p className="truncate text-sm font-medium">
-                                                                        {
-                                                                            document.name
-                                                                        }
-                                                                    </p>
-                                                                </li>
-                                                            ),
-                                                        )}
-                                                    </ul>
-                                                </div>
                                             ) : null}
                                         </div>
                                     ) : (
@@ -742,61 +956,6 @@ export default function Index({
                                                 ) : null}
                                                 Submit
                                             </Button>
-                                        ) : null}
-                                        {activeAction?.action_type ===
-                                            'review' &&
-                                        isCurrentPhaseSelected &&
-                                        activeProposal.can_review ? (
-                                            activeAction.decision_mode ===
-                                            'custom' ? (
-                                                activeAction.custom_decision_branches?.map(
-                                                    (branch) => (
-                                                        <Button
-                                                            key={branch.id}
-                                                            type="button"
-                                                            disabled={
-                                                                isAdvancing
-                                                            }
-                                                            onClick={() =>
-                                                                handleReviewDecision(
-                                                                    branch.id,
-                                                                )
-                                                            }
-                                                        >
-                                                            {isAdvancing ? (
-                                                                <Loader2 className="mr-2 size-4 animate-spin" />
-                                                            ) : null}
-                                                            {branch.label}
-                                                        </Button>
-                                                    ),
-                                                )
-                                            ) : (
-                                                <>
-                                                    <Button
-                                                        type="button"
-                                                        disabled={isAdvancing}
-                                                        onClick={() =>
-                                                            handleReviewDecision(
-                                                                'approve',
-                                                            )
-                                                        }
-                                                    >
-                                                        Approve
-                                                    </Button>
-                                                    <Button
-                                                        type="button"
-                                                        variant="outline"
-                                                        disabled={isAdvancing}
-                                                        onClick={() =>
-                                                            handleReviewDecision(
-                                                                'deny',
-                                                            )
-                                                        }
-                                                    >
-                                                        Deny
-                                                    </Button>
-                                                </>
-                                            )
                                         ) : null}
                                         {!activeAction &&
                                         activeProposal.completed_at ? (
@@ -1042,6 +1201,63 @@ export default function Index({
                             </Button>
                         </DialogFooter>
                     </form>
+                </DialogContent>
+            </Dialog>
+            <Dialog
+                open={documentToView !== null}
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setDocumentToView(null);
+                        setDocumentViewUrl(null);
+                    }
+                }}
+            >
+                <DialogContent className="!inset-0 !top-0 !left-0 flex h-[100dvh] !w-screen !max-w-none !translate-x-0 !translate-y-0 flex-col rounded-none border-0 p-4 sm:p-6 [&>button:last-child]:bg-background [&>button:last-child]:text-foreground [&>button:last-child]:opacity-100 [&>button:last-child]:shadow-sm [&>button:last-child]:ring-1 [&>button:last-child]:ring-border [&>button:last-child]:hover:bg-muted [&>button:last-child_svg]:size-5">
+                    <DialogHeader>
+                        <DialogTitle>
+                            {documentToView?.name ?? 'Document preview'}
+                        </DialogTitle>
+                        <DialogDescription>
+                            Previewing the document from secure storage.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border bg-muted">
+                        {isLoadingDocumentView ? (
+                            <div
+                                className="flex h-full flex-col items-center justify-center gap-5 p-6 text-center"
+                                role="status"
+                                aria-live="polite"
+                            >
+                                <div className="flex size-16 items-center justify-center rounded-full bg-background shadow-sm">
+                                    <LoaderCircle
+                                        className="size-7 animate-spin text-primary"
+                                        aria-hidden="true"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <p className="text-sm font-medium text-foreground">
+                                        Preparing preview
+                                    </p>
+                                    <p className="text-sm text-muted-foreground">
+                                        Connecting to secure storage...
+                                    </p>
+                                </div>
+                                <div className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-background">
+                                    <div className="h-full w-1/2 animate-pulse rounded-full bg-primary" />
+                                </div>
+                            </div>
+                        ) : documentViewUrl ? (
+                            <iframe
+                                src={documentViewUrl}
+                                title={`Preview ${documentToView?.name ?? 'document'}`}
+                                className="h-full min-h-[24rem] w-full border-0"
+                            />
+                        ) : (
+                            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                                Preview unavailable.
+                            </div>
+                        )}
+                    </div>
                 </DialogContent>
             </Dialog>
         </div>

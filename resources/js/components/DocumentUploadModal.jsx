@@ -28,7 +28,9 @@ export default function DocumentUploadModal({
     trigger,
     submitLabel = 'Save',
     initialValues = { name: '', label: 'form' },
+    showName = true,
     showType = true,
+    expectedType = null,
     onSubmit,
     uploadProgress = null,
 }) {
@@ -51,7 +53,7 @@ export default function DocumentUploadModal({
     const handleSubmit = async (event) => {
         event.preventDefault();
 
-        if (!values.name.trim()) {
+        if (showName && !values.name.trim()) {
             setErrors({
                 name: 'Document name is required.',
                 label: '',
@@ -95,29 +97,43 @@ export default function DocumentUploadModal({
                     <DialogTitle>{title}</DialogTitle>
                     <DialogDescription>{description}</DialogDescription>
                 </DialogHeader>
+                {expectedType ? (
+                    <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+                        <span className="text-muted-foreground">
+                            Expected file type
+                        </span>
+                        <span className="rounded bg-muted px-2 py-1 font-mono text-xs text-foreground">
+                            {expectedType}
+                        </span>
+                    </div>
+                ) : null}
                 <form
                     className="space-y-4 overflow-hidden"
                     onSubmit={handleSubmit}
                 >
-                    <div className="grid gap-2">
-                        <Label htmlFor="document-name">Document name</Label>
-                        <Input
-                            id="document-name"
-                            value={values.name}
-                            onChange={(event) =>
-                                setValues({
-                                    ...values,
-                                    name: event.target.value,
-                                })
-                            }
-                            placeholder="e.g. Client intake form"
-                        />
-                        {errors.name ? (
-                            <p className="text-sm text-destructive">
-                                {errors.name}
-                            </p>
-                        ) : null}
-                    </div>
+                    {showName ? (
+                        <div className="grid gap-2">
+                            <Label htmlFor="document-name">
+                                Document name
+                            </Label>
+                            <Input
+                                id="document-name"
+                                value={values.name}
+                                onChange={(event) =>
+                                    setValues({
+                                        ...values,
+                                        name: event.target.value,
+                                    })
+                                }
+                                placeholder="e.g. Client intake form"
+                            />
+                            {errors.name ? (
+                                <p className="text-sm text-destructive">
+                                    {errors.name}
+                                </p>
+                            ) : null}
+                        </div>
+                    ) : null}
                     {showType ? (
                         <div className="grid gap-2">
                             <Label htmlFor="document-label">
