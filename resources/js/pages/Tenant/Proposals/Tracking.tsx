@@ -1,6 +1,16 @@
-import { Link } from '@inertiajs/react';
-import { Activity, Check, Eye, FileText, Search, X } from 'lucide-react';
+import { router } from '@inertiajs/react';
+import {
+    Activity,
+    Check,
+    Eye,
+    FileText,
+    Loader2,
+    LoaderCircle,
+    Search,
+    X,
+} from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import PhasePipeline from '@/components/PhasePipeline';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,9 +21,21 @@ type Phase = {
     id: number;
     name: string;
     order: number;
+    actions?: Action[];
+};
+
+type Action = {
+    id: number;
+    name: string;
+    description?: string | null;
+    action_type: 'submit' | 'review';
+    decision_mode: 'approve_deny' | 'custom';
+    custom_decision_branches?: { id: string; label: string; destination?: string }[] | null;
+    documents?: { id: number; name: string; file_type: string }[];
 };
 
 type Process = {
+    id: number;
     name: string;
     phases?: Phase[];
 };
@@ -26,7 +48,26 @@ type Proposal = {
     title: string;
     process: Process | null;
     current_phase: Phase | null;
+    current_action: Action | null;
+    completed_at: string | null;
     created_at: string;
+    phase_transitions: { id: number; phase: Phase; created_at: string }[];
+    action_transitions: {
+        id: number;
+        action: Action;
+        decision: string | null;
+        created_at: string;
+    }[];
+    documents: {
+        id: number;
+        name: string;
+        file_type: string;
+        pivot: {
+            phase_id: number | null;
+            required_document_id: number | null;
+            action_id: number | null;
+        };
+    }[];
     isSample?: boolean;
 };
 
@@ -35,13 +76,22 @@ const hasAssignedCurrentPhase = (proposal: Proposal): boolean => Boolean(
     && proposal.process?.phases?.some((phase) => phase.id === proposal.current_phase?.id),
 );
 
+const hasSubmittedRequiredFiles = (proposal: Proposal): boolean => {
+    const requiredDocuments = proposal.current_action?.documents ?? [];
+
+    return requiredDocuments.every((requiredDocument) => proposal.documents.some((document) => (
+        document.pivot.required_document_id === requiredDocument.id
+        && document.pivot.action_id === proposal.current_action?.id
+        && document.pivot.phase_id === proposal.current_phase?.id
+    )));
+};
+
 type Props = {
     proposals: Proposal[];
-    viewerId: number;
-    viewerType: string;
 };
 
 type SampleDetailsState = 'waiting' | 'submitted';
+const ARCHIVED_PHASE = 'archived';
 
 const sampleRequiredItems = [
     { id: 'proposal', name: 'Research proposal document' },
@@ -57,21 +107,36 @@ const sampleSubmittedFiles = [
 
 const sampleProposal: Proposal = {
     id: 0,
+    user_id: 0,
+    user_type: 'sample',
+    can_review: false,
     title: 'Community Health Research Proposal',
     process: {
+        id: 0,
         name: 'Research Proposal Workflow',
         phases: [{ id: 1, name: 'Initial Review', order: 1 }],
     },
     current_phase: { id: 1, name: 'Initial Review', order: 1 },
+    current_action: null,
+    completed_at: null,
     created_at: '2026-10-15T08:00:00.000Z',
+    phase_transitions: [],
+    action_transitions: [],
+    documents: [],
     isSample: true,
 };
 
-export default function Tracking({ proposals, viewerId, viewerType }: Props) {
+export default function Tracking({ proposals }: Props) {
     const [isSampleDetailsOpen, setIsSampleDetailsOpen] = useState(false);
+    const [selectedProposalId, setSelectedProposalId] = useState<number | null>(null);
+    const [documentToView, setDocumentToView] =
+        useState<Proposal['documents'][number] | null>(null);
+    const [documentViewUrl, setDocumentViewUrl] = useState<string | null>(null);
+    const [isLoadingDocumentView, setIsLoadingDocumentView] = useState(false);
+    const [isSubmittingDecision, setIsSubmittingDecision] = useState(false);
     const [sampleDetailsState, setSampleDetailsState] = useState<SampleDetailsState>('waiting');
     const [sampleFileSearch, setSampleFileSearch] = useState('');
-    const [requestedPhaseOrder, setRequestedPhaseOrder] = useState<number | null>(null);
+    const [requestedPhaseOrder, setRequestedPhaseOrder] = useState<number | string | null>(null);
     const phases = useMemo(() => {
         const allPhaseOrders = new Set(
             proposals.flatMap((proposal) => proposal.process?.phases?.map((phase) => phase.order) ?? []),
@@ -84,7 +149,9 @@ export default function Tracking({ proposals, viewerId, viewerType }: Props) {
                 ),
             );
             const proposalCount = proposals.filter((proposal) => (
-                hasAssignedCurrentPhase(proposal) && proposal.current_phase?.order === order
+                !proposal.completed_at
+                && hasAssignedCurrentPhase(proposal)
+                && proposal.current_phase?.order === order
             )).length;
 
             return {
@@ -95,20 +162,42 @@ export default function Tracking({ proposals, viewerId, viewerType }: Props) {
             };
         });
     }, [proposals]);
-    const selectedPhaseOrder = phases.some((phase) => phase.id === requestedPhaseOrder)
-        ? requestedPhaseOrder
-        : proposals.find(hasAssignedCurrentPhase)?.current_phase?.order ?? phases[0]?.id ?? null;
+    const isArchivedSelected = requestedPhaseOrder === ARCHIVED_PHASE;
+    const archivedProposals = useMemo(
+        () => proposals.filter((proposal) => Boolean(proposal.completed_at)),
+        [proposals],
+    );
+    const explicitlySelectedPhase = phases.find(
+        (phase) => phase.id === requestedPhaseOrder,
+    );
+    const selectedPhaseOrder = isArchivedSelected
+        ? null
+        : explicitlySelectedPhase?.id
+          ?? proposals.find(hasAssignedCurrentPhase)?.current_phase?.order
+          ?? phases[0]?.id
+          ?? null;
     const [search, setSearch] = useState('');
+    const selectedProposal = proposals.find(
+        (proposal) => proposal.id === selectedProposalId,
+    ) ?? null;
     const phaseProposals = useMemo(() => {
+        if (isArchivedSelected) {
+            return archivedProposals;
+        }
+
         if (selectedPhaseOrder === null) {
             return [];
         }
 
         return proposals.filter((proposal) => (
-            hasAssignedCurrentPhase(proposal) && proposal.current_phase?.order === selectedPhaseOrder
+            !proposal.completed_at
+            && hasAssignedCurrentPhase(proposal)
+            && proposal.current_phase?.order === selectedPhaseOrder
         ));
-    }, [proposals, selectedPhaseOrder]);
-    const selectedPhaseName = phases.find((phase) => phase.id === selectedPhaseOrder)?.name ?? 'No workflow phases';
+    }, [archivedProposals, isArchivedSelected, proposals, selectedPhaseOrder]);
+    const selectedPhaseName = isArchivedSelected
+        ? 'Archived'
+        : phases.find((phase) => phase.id === selectedPhaseOrder)?.name ?? 'No workflow phases';
     const sampleDefaultPhase = sampleProposal.current_phase ?? { id: 1, name: 'Initial Review', order: 1 };
     const sampleForSelectedPhase = useMemo<Proposal>(() => ({
         ...sampleProposal,
@@ -124,7 +213,9 @@ export default function Tracking({ proposals, viewerId, viewerType }: Props) {
         const normalizedSearch = search.trim().toLocaleLowerCase();
 
         if (!normalizedSearch) {
-            return [...phaseProposals, sampleForSelectedPhase];
+            return isArchivedSelected
+                ? phaseProposals
+                : [...phaseProposals, sampleForSelectedPhase];
         }
 
         const matchingProposals = phaseProposals.filter((proposal) =>
@@ -138,8 +229,71 @@ export default function Tracking({ proposals, viewerId, viewerType }: Props) {
             sampleForSelectedPhase.current_phase?.name ?? '',
         ].some((value) => value.toLocaleLowerCase().includes(normalizedSearch));
 
-        return sampleMatchesSearch ? [...matchingProposals, sampleForSelectedPhase] : matchingProposals;
-    }, [phaseProposals, sampleForSelectedPhase, search]);
+        return !isArchivedSelected && sampleMatchesSearch
+            ? [...matchingProposals, sampleForSelectedPhase]
+            : matchingProposals;
+    }, [isArchivedSelected, phaseProposals, sampleForSelectedPhase, search]);
+
+    const handleReviewDecision = (decision: string) => {
+        if (!selectedProposal?.can_review || !selectedProposal.current_action) {
+            return;
+        }
+
+        router.post(
+            `/tenant/proposals/${selectedProposal.id}/review`,
+            { decision },
+            {
+                preserveScroll: true,
+                onStart: () => setIsSubmittingDecision(true),
+                onFinish: () => setIsSubmittingDecision(false),
+                onSuccess: () => {
+                    setSelectedProposalId(null);
+                    toast.success('Review decision submitted.');
+                    router.reload({ only: ['proposals'] });
+                },
+                onError: (errors) =>
+                    toast.error(
+                        errors.workflow || 'Review decision failed.',
+                    ),
+            },
+        );
+    };
+
+    const handleViewDocument = async (
+        file: Proposal['documents'][number],
+    ) => {
+        setDocumentToView(file);
+        setDocumentViewUrl(null);
+        setIsLoadingDocumentView(true);
+
+        try {
+            const response = await fetch(
+                `/tenant/documents/${file.id}/view-url`,
+                { headers: { Accept: 'application/json' } },
+            );
+            const data = (await response.json()) as {
+                url?: string;
+                error?: string;
+            };
+
+            if (!response.ok || !data.url) {
+                throw new Error(
+                    data.error || 'Unable to load document preview.',
+                );
+            }
+
+            setDocumentViewUrl(data.url);
+        } catch (error) {
+            setDocumentToView(null);
+            toast.error(
+                error instanceof Error
+                    ? error.message
+                    : 'Unable to load document preview.',
+            );
+        } finally {
+            setIsLoadingDocumentView(false);
+        }
+    };
 
     return (
         <div className="flex flex-col gap-4 p-4 md:min-h-0 md:flex-1 md:p-6">
@@ -159,7 +313,17 @@ export default function Tracking({ proposals, viewerId, viewerType }: Props) {
                 <PhasePipeline
                     phases={phases}
                     activePhaseId={selectedPhaseOrder ?? undefined}
-                    onPhaseSelect={setRequestedPhaseOrder}
+                    onPhaseSelect={(phaseId) => setRequestedPhaseOrder(phaseId)}
+                    endNode={{
+                        name: 'Archived',
+                        detail: `${archivedProposals.length} ${
+                            archivedProposals.length === 1
+                                ? 'proposal'
+                                : 'proposals'
+                        }`,
+                        isActive: isArchivedSelected,
+                        onSelect: () => setRequestedPhaseOrder(ARCHIVED_PHASE),
+                    }}
                     showPhaseDetails
                     centerActivePhase
                 />
@@ -170,8 +334,9 @@ export default function Tracking({ proposals, viewerId, viewerType }: Props) {
                     <div>
                         <h2 className="text-sm font-semibold">{selectedPhaseName}</h2>
                         <p className="mt-0.5 text-xs text-muted-foreground">
-                            {phaseProposals.length} {phaseProposals.length === 1 ? 'proposal' : 'proposals'} in this phase
-                            {' · Sample preview included (not saved)'}
+                            {isArchivedSelected
+                                ? `${phaseProposals.length} archived ${phaseProposals.length === 1 ? 'proposal' : 'proposals'}`
+                                : `${phaseProposals.length} ${phaseProposals.length === 1 ? 'proposal' : 'proposals'} in this phase · Sample preview included (not saved)`}
                         </p>
                     </div>
                     <div className="relative w-full">
@@ -224,12 +389,19 @@ export default function Tracking({ proposals, viewerId, viewerType }: Props) {
                                             >
                                                 Details
                                             </Button>
-                                        ) : (proposal.user_id === viewerId && proposal.user_type === viewerType) || proposal.can_review ? (
-                                            <Button variant="outline" size="sm" asChild>
-                                                <Link href={`/tenant/proposals/${proposal.id}`}>Details</Link>
-                                            </Button>
                                         ) : (
-                                            <span className="text-xs text-muted-foreground">Owner or assigned reviewer only</span>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => setSelectedProposalId(proposal.id)}
+                                            >
+                                                {proposal.can_review
+                                                    && proposal.current_action?.action_type === 'review'
+                                                    && !proposal.completed_at
+                                                    && hasSubmittedRequiredFiles(proposal)
+                                                    ? 'Review'
+                                                    : 'Details'}
+                                            </Button>
                                         )}
                                     </td>
                                 </tr>
@@ -249,6 +421,203 @@ export default function Tracking({ proposals, viewerId, viewerType }: Props) {
                     </table>
                 </div>
             </section>
+
+            <Dialog
+                open={selectedProposal !== null}
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setSelectedProposalId(null);
+                    }
+                }}
+            >
+                <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+                    {selectedProposal ? (
+                        <>
+                            <DialogHeader>
+                                <DialogTitle>{selectedProposal.title}</DialogTitle>
+                                <DialogDescription>
+                                    Proposal #{selectedProposal.id} details and current workflow status.
+                                </DialogDescription>
+                            </DialogHeader>
+
+                            <div className="space-y-5">
+                                <div className="flex items-center justify-between gap-3 border-b border-border pb-3">
+                                    <div>
+                                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                            Current status
+                                        </p>
+                                        <p className="mt-1 text-sm">
+                                            {selectedProposal.current_action?.action_type === 'review'
+                                                ? 'Waiting for review'
+                                                : selectedProposal.completed_at
+                                                  ? 'Complete'
+                                                  : selectedProposal.current_phase?.name ?? 'Not started'}
+                                        </p>
+                                    </div>
+                                    <Badge variant="outline">
+                                        {selectedProposal.current_action?.name ?? (selectedProposal.completed_at ? 'Complete' : 'In progress')}
+                                    </Badge>
+                                </div>
+
+                                <dl className="grid gap-3 text-sm sm:grid-cols-2">
+                                    <div>
+                                        <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Workflow</dt>
+                                        <dd className="mt-1">{selectedProposal.process?.name ?? 'No workflow assigned'}</dd>
+                                    </div>
+                                    <div>
+                                        <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Current phase</dt>
+                                        <dd className="mt-1">{selectedProposal.current_phase?.name ?? 'Not started'}</dd>
+                                    </div>
+                                    <div>
+                                        <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Created</dt>
+                                        <dd className="mt-1">{new Date(selectedProposal.created_at).toLocaleString()}</dd>
+                                    </div>
+                                    {selectedProposal.current_action?.description ? (
+                                        <div className="sm:col-span-2">
+                                            <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Current action</dt>
+                                            <dd className="mt-1">{selectedProposal.current_action.description}</dd>
+                                        </div>
+                                    ) : null}
+                                </dl>
+
+                                <div>
+                                    <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                        Submitted files
+                                    </h3>
+                                    {selectedProposal.documents.length > 0 ? (
+                                        <ul className="max-h-48 space-y-2 overflow-y-auto">
+                                            {selectedProposal.documents.map((file) => (
+                                                <li
+                                                    key={file.id}
+                                                    className="flex min-w-0 items-center gap-3 rounded-md border border-border px-3 py-2"
+                                                >
+                                                    <FileText className="size-4 shrink-0 text-muted-foreground" />
+                                                    <span className="min-w-0 flex-1 truncate text-sm font-medium">{file.name}</span>
+                                                    <span className="shrink-0 text-xs text-muted-foreground">{file.file_type}</span>
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="size-8 shrink-0"
+                                                        aria-label={`View ${file.name}`}
+                                                        title="View file"
+                                                        onClick={() => {
+                                                            void handleViewDocument(file);
+                                                        }}
+                                                    >
+                                                        <Eye className="size-4" />
+                                                    </Button>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    ) : (
+                                        <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+                                            No files have been submitted.
+                                        </p>
+                                    )}
+                                </div>
+
+                                {selectedProposal.can_review && selectedProposal.current_action?.action_type === 'review' ? (
+                                    <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4">
+                                        {selectedProposal.current_action.decision_mode === 'custom'
+                                            ? selectedProposal.current_action.custom_decision_branches?.map((branch) => (
+                                                <Button
+                                                    key={branch.id}
+                                                    type="button"
+                                                    disabled={isSubmittingDecision}
+                                                    onClick={() => handleReviewDecision(branch.id)}
+                                                >
+                                                    {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                                                    {branch.label}
+                                                </Button>
+                                            ))
+                                            : (
+                                                <>
+                                                    <Button
+                                                        type="button"
+                                                        variant="destructive"
+                                                        disabled={isSubmittingDecision}
+                                                        onClick={() => handleReviewDecision('deny')}
+                                                    >
+                                                        {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                                                        Reject
+                                                    </Button>
+                                                    <Button
+                                                        type="button"
+                                                        disabled={isSubmittingDecision}
+                                                        onClick={() => handleReviewDecision('approve')}
+                                                    >
+                                                        {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                                                        <Check className="mr-1.5 size-4" />
+                                                        Accept
+                                                    </Button>
+                                                </>
+                                            )}
+                                    </div>
+                                ) : null}
+                            </div>
+                        </>
+                    ) : null}
+                </DialogContent>
+            </Dialog>
+
+            <Dialog
+                open={documentToView !== null}
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setDocumentToView(null);
+                        setDocumentViewUrl(null);
+                    }
+                }}
+            >
+                <DialogContent className="!inset-0 !top-0 !left-0 flex h-[100dvh] !w-screen !max-w-none !translate-x-0 !translate-y-0 flex-col rounded-none border-0 p-4 sm:p-6 [&>button:last-child]:bg-background [&>button:last-child]:text-foreground [&>button:last-child]:opacity-100 [&>button:last-child]:shadow-sm [&>button:last-child]:ring-1 [&>button:last-child]:ring-border [&>button:last-child]:hover:bg-muted [&>button:last-child_svg]:size-5">
+                    <DialogHeader>
+                        <DialogTitle>
+                            {documentToView?.name ?? 'Document preview'}
+                        </DialogTitle>
+                        <DialogDescription>
+                            Previewing the document from secure storage.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border bg-muted">
+                        {isLoadingDocumentView ? (
+                            <div
+                                className="flex h-full flex-col items-center justify-center gap-5 p-6 text-center"
+                                role="status"
+                                aria-live="polite"
+                            >
+                                <div className="flex size-16 items-center justify-center rounded-full bg-background shadow-sm">
+                                    <LoaderCircle
+                                        className="size-7 animate-spin text-primary"
+                                        aria-hidden="true"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <p className="text-sm font-medium text-foreground">
+                                        Preparing preview
+                                    </p>
+                                    <p className="text-sm text-muted-foreground">
+                                        Connecting to secure storage...
+                                    </p>
+                                </div>
+                                <div className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-background">
+                                    <div className="h-full w-1/2 animate-pulse rounded-full bg-primary" />
+                                </div>
+                            </div>
+                        ) : documentViewUrl ? (
+                            <iframe
+                                src={documentViewUrl}
+                                title={`Preview ${documentToView?.name ?? 'document'}`}
+                                className="h-full min-h-[24rem] w-full border-0"
+                            />
+                        ) : (
+                            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                                Preview unavailable.
+                            </div>
+                        )}
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             <Dialog open={isSampleDetailsOpen} onOpenChange={setIsSampleDetailsOpen}>
                 <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">

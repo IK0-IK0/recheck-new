@@ -4,6 +4,8 @@ import {
     CalendarDays,
     Check,
     CheckCircle2,
+    ChevronLeft,
+    ChevronRight,
     ChevronDown,
     ClipboardList,
     FileText,
@@ -199,6 +201,9 @@ export default function Index({
     const [selectedPhaseIdByProposal, setSelectedPhaseIdByProposal] = useState<
         Record<number, number>
     >({});
+    const [selectedActionIdByPhase, setSelectedActionIdByPhase] = useState<
+        Record<string, number>
+    >({});
     const [isAdvancing, setIsAdvancing] = useState(false);
     const { data, setData, post, processing, errors, reset } = useForm({
         title: '',
@@ -237,9 +242,50 @@ export default function Index({
     const selectedPhaseName = selectedPhase?.name ?? null;
     const isCurrentPhaseSelected =
         selectedPhaseId === activeProposal?.current_phase?.id;
-    const activeAction = isCurrentPhaseSelected
-        ? (activeProposal?.current_action ?? null)
-        : null;
+    const selectedPhaseActions = selectedPhase?.actions ?? [];
+    const completedActionIds = new Set(
+        activeProposal?.action_transitions.map(
+            (transition) => transition.action.id,
+        ) ?? [],
+    );
+    const availableActions = selectedPhaseActions.filter(
+        (action) =>
+            completedActionIds.has(action.id) ||
+            (isCurrentPhaseSelected &&
+                action.id === activeProposal?.current_action?.id),
+    );
+    const actionSelectionKey =
+        activeProposal && selectedPhase
+            ? `${activeProposal.id}:${selectedPhase.id}`
+            : '';
+    const requestedActionId = selectedActionIdByPhase[actionSelectionKey];
+    const latestCompletedAction = [...(activeProposal?.action_transitions ?? [])]
+        .reverse()
+        .find((transition) =>
+            selectedPhaseActions.some(
+                (action) => action.id === transition.action.id,
+            ),
+        )?.action;
+    const activeAction =
+        availableActions.find((action) => action.id === requestedActionId) ??
+        availableActions.find(
+            (action) => action.id === activeProposal?.current_action?.id,
+        ) ??
+        availableActions.find(
+            (action) => action.id === latestCompletedAction?.id,
+        ) ??
+        availableActions[0] ??
+        (isCurrentPhaseSelected
+            ? (activeProposal?.current_action ?? null)
+            : null);
+    const activeActionIndex = availableActions.findIndex(
+        (action) => action.id === activeAction?.id,
+    );
+    const isCurrentActionSelected =
+        isCurrentPhaseSelected &&
+        activeAction?.id === activeProposal?.current_action?.id;
+    const canUploadSelectedAction =
+        isCurrentActionSelected && activeAction?.action_type !== 'review';
     const pipelinePhases = proposalPhases.map((phase, index) => {
         const isCurrent = phase.id === activeProposal?.current_phase?.id;
         const isComplete = activePhaseIndex >= 0 && index < activePhaseIndex;
@@ -289,7 +335,6 @@ export default function Index({
                   new Date(first.createdAt).getTime(),
           )
         : [];
-    const selectedPhaseActions = selectedPhase?.actions ?? [];
     const requiredDocuments = new Map<number, RequiredDocument>();
 
     (activeAction ? [activeAction] : selectedPhaseActions).forEach((action) => {
@@ -319,7 +364,12 @@ export default function Index({
         files: File[],
         replaceDocumentId?: number,
     ) => {
-        if (!activeProposal || !selectedPhase || files.length === 0) {
+        if (
+            !activeProposal ||
+            !selectedPhase ||
+            !canUploadSelectedAction ||
+            files.length === 0
+        ) {
             return false;
         }
 
@@ -518,6 +568,7 @@ export default function Index({
             !activeProposal ||
             !activeAction ||
             activeAction.action_type !== 'submit' ||
+            !isCurrentActionSelected ||
             isAdvancing
         ) {
             return;
@@ -530,8 +581,15 @@ export default function Index({
                 preserveScroll: true,
                 onStart: () => setIsAdvancing(true),
                 onFinish: () => setIsAdvancing(false),
-                onSuccess: () =>
-                    toast.success('Action submitted successfully.'),
+                onSuccess: () => {
+                    setSelectedActionIdByPhase((current) => {
+                        const next = { ...current };
+                        delete next[actionSelectionKey];
+
+                        return next;
+                    });
+                    toast.success('Action submitted successfully.');
+                },
                 onError: (submitErrors) =>
                     toast.error(
                         submitErrors.workflow ||
@@ -748,15 +806,112 @@ export default function Index({
                                             Actions
                                         </h3>
                                         {activeAction ? (
-                                            <Badge variant="outline" className="gap-1.5">
-                                                {activeAction.action_type ===
-                                                'submit' ? (
-                                                    <Send className="size-3.5" />
-                                                ) : (
-                                                    <Eye className="size-3.5" />
-                                                )}
-                                                {activeAction.name}
-                                            </Badge>
+                                            <div className="flex min-w-0 items-center gap-1.5">
+                                                <Badge
+                                                    variant="outline"
+                                                    className="max-w-full gap-1.5"
+                                                >
+                                                    {activeAction.action_type ===
+                                                    'submit' ? (
+                                                        <Send className="size-3.5 shrink-0" />
+                                                    ) : (
+                                                        <Eye className="size-3.5 shrink-0" />
+                                                    )}
+                                                    <span className="truncate">
+                                                        {activeAction.name}
+                                                    </span>
+                                                    {availableActions.length >
+                                                    1 ? (
+                                                        <span className="shrink-0 text-muted-foreground">
+                                                            {activeActionIndex +
+                                                                1}
+                                                            /
+                                                            {
+                                                                availableActions.length
+                                                            }
+                                                        </span>
+                                                    ) : null}
+                                                </Badge>
+                                                {availableActions.length > 1 ? (
+                                                    <div className="flex shrink-0 items-center gap-0.5">
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="size-7"
+                                                        disabled={
+                                                            activeActionIndex <=
+                                                            0
+                                                        }
+                                                        aria-label="View previous action"
+                                                        title="Previous action"
+                                                        onClick={() => {
+                                                            const action =
+                                                                availableActions[
+                                                                    activeActionIndex -
+                                                                        1
+                                                                ];
+
+                                                            if (
+                                                                action &&
+                                                                actionSelectionKey
+                                                            ) {
+                                                                setSelectedActionIdByPhase(
+                                                                    (
+                                                                        current,
+                                                                    ) => ({
+                                                                        ...current,
+                                                                        [actionSelectionKey]:
+                                                                            action.id,
+                                                                    }),
+                                                                );
+                                                            }
+                                                        }}
+                                                    >
+                                                        <ChevronLeft className="size-4" />
+                                                    </Button>
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="size-7"
+                                                        disabled={
+                                                            activeActionIndex <
+                                                                0 ||
+                                                            activeActionIndex >=
+                                                                availableActions.length -
+                                                                    1
+                                                        }
+                                                        aria-label="View next action"
+                                                        title="Next action"
+                                                        onClick={() => {
+                                                            const action =
+                                                                availableActions[
+                                                                    activeActionIndex +
+                                                                        1
+                                                                ];
+
+                                                            if (
+                                                                action &&
+                                                                actionSelectionKey
+                                                            ) {
+                                                                setSelectedActionIdByPhase(
+                                                                    (
+                                                                        current,
+                                                                    ) => ({
+                                                                        ...current,
+                                                                        [actionSelectionKey]:
+                                                                            action.id,
+                                                                    }),
+                                                                );
+                                                            }
+                                                        }}
+                                                    >
+                                                        <ChevronRight className="size-4" />
+                                                    </Button>
+                                                    </div>
+                                                ) : null}
+                                            </div>
                                         ) : null}
                                     </div>
                                     {selectedPhase ? (
@@ -837,8 +992,7 @@ export default function Index({
                                                                                     <Eye className="size-3.5" />
                                                                                 </Button>
                                                                             ) : null}
-                                                                            {activeAction?.action_type ===
-                                                                            'review' ? null : (
+                                                                            {!canUploadSelectedAction ? null : (
                                                                             <DocumentUploadModal
                                                                                 title={`${submittedDocument ? 'Replace' : 'Upload'} ${document.name}`}
                                                                                 description={`${submittedDocument ? 'Choose a replacement file' : 'Upload the file'} required for ${activeAction?.name ?? selectedPhaseName}.`}
@@ -937,7 +1091,7 @@ export default function Index({
                                         </p>
                                         {activeAction?.action_type ===
                                             'submit' &&
-                                        isCurrentPhaseSelected ? (
+                                        isCurrentActionSelected ? (
                                             <Button
                                                 type="button"
                                                 disabled={
