@@ -289,6 +289,7 @@ export default function Index({
     const pipelinePhases = proposalPhases.map((phase, index) => {
         const isCurrent = phase.id === activeProposal?.current_phase?.id;
         const isComplete = activePhaseIndex >= 0 && index < activePhaseIndex;
+//asdasd
 
         return {
             ...phase,
