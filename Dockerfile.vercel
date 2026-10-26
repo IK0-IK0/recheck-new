@@ -55,6 +55,8 @@ RUN composer dump-autoload \
         --no-dev \
         --classmap-authoritative \
         --optimize \
+    && mkdir -p storage/framework/cache/data storage/framework/sessions \
+        storage/framework/views bootstrap/cache \
     && php artisan wayfinder:generate --with-form --no-interaction \
     && node /usr/local/lib/node_modules/npm/bin/npm-cli.js ci \
     && node /usr/local/lib/node_modules/npm/bin/npm-cli.js run build \
