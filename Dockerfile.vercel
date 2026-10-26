@@ -55,6 +55,7 @@ RUN composer dump-autoload \
         --no-dev \
         --classmap-authoritative \
         --optimize \
+    && php artisan wayfinder:generate --with-form --no-interaction \
     && node /usr/local/lib/node_modules/npm/bin/npm-cli.js ci \
     && node /usr/local/lib/node_modules/npm/bin/npm-cli.js run build \
     && rm -rf node_modules
