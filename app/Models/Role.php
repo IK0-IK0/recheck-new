@@ -11,6 +11,7 @@ use Illuminate\Support\Carbon;
 /**
  * @property int $id
  * @property string $name
+ * @property bool $is_default
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  */
@@ -33,7 +34,20 @@ class Role extends Model
      */
     protected $fillable = [
         'name',
+        'is_default',
     ];
+
+    /**
+     * Get the attributes that should be cast.
+     *
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'is_default' => 'boolean',
+        ];
+    }
 
     /**
      * The institution users that belong to the role.

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { router, useForm } from '@inertiajs/react';
-import { Edit3, Trash2, Shield } from 'lucide-react';
+import { Edit3, Plus, Shield, Star, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import RoleModal from '@/components/RoleModal';
 import { Button } from '@/components/ui/button';
@@ -15,46 +15,47 @@ import {
 } from '@/components/ui/dialog';
 
 const defaultRoleFormData = { name: '', permissions: [] };
+const proposalVisibilityLabels = {
+    'proposal.view.all': 'Full',
+    'proposal.view.own_or_assigned': 'Scoped',
+};
 
-export default function Roles({ roles = [], permissions = [] }) {
+export default function Roles({ roles = [], permissions = [], defaultRoleId = null }) {
     const [editingRole, setEditingRole] = useState(null);
     const [roleToDelete, setRoleToDelete] = useState(null);
     const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
     const form = useForm(defaultRoleFormData);
 
-    const handleSubmit = async (values) => {
+    const handleSubmit = (values) => new Promise((resolve) => {
         form.clearErrors();
-        let succeeded = false;
+        const callbacks = {
+            onSuccess: () => {
+                toast.success(editingRole ? 'Role updated.' : 'Role created.');
 
-        if (editingRole) {
-            form.transform(() => values);
-            await form.put(`/tenant/roles/${editingRole.id}`, {
-                onSuccess: () => {
-                    succeeded = true;
-                    toast.success('Role updated.');
+                if (editingRole) {
                     setEditingRole(null);
                     setIsRoleModalOpen(false);
-                },
-                onError: () => {
-                    toast.error('Unable to update role.');
-                },
-            });
-            return succeeded;
-        }
+                }
 
-        form.transform(() => values);
-        await form.post('/tenant/roles', {
-            onSuccess: () => {
-                succeeded = true;
-                toast.success('Role created.');
+                resolve(true);
             },
             onError: () => {
-                toast.error('Unable to create role.');
+                toast.error(editingRole ? 'Unable to update role.' : 'Unable to create role.');
+                resolve(false);
             },
-        });
+            onCancel: () => resolve(false),
+            onFinish: () => resolve(false),
+        };
 
-        return succeeded;
-    };
+        form.transform(() => values);
+
+        if (editingRole) {
+            form.put(`/tenant/roles/${editingRole.id}`, callbacks);
+            return;
+        }
+
+        form.post('/tenant/roles', callbacks);
+    });
 
     const handleEdit = (role) => {
         setEditingRole(role);
@@ -78,6 +79,13 @@ export default function Roles({ roles = [], permissions = [] }) {
         });
     };
 
+    const setDefaultRole = (role) => {
+        router.post(`/tenant/roles/${role.id}/default`, {}, {
+            onSuccess: () => toast.success(`${role.name} is now the default role for new users.`),
+            onError: () => toast.error('Unable to set the default role.'),
+        });
+    };
+
     return (
         <>
             <div className="flex h-full flex-col">
@@ -89,7 +97,7 @@ export default function Roles({ roles = [], permissions = [] }) {
                         </div>
                         <div>
                             <h1 className="text-lg font-semibold">Role Management</h1>
-                            <p className="text-xs text-muted-foreground">Manage roles and assign permissions</p>
+                            <p className="text-xs text-muted-foreground">Manage roles, permissions, and the default role for new users.</p>
                         </div>
                     </div>
                     
@@ -98,7 +106,12 @@ export default function Roles({ roles = [], permissions = [] }) {
                         submitLabel="Add"
                         permissions={permissions}
                         onSubmit={handleSubmit}
-                        trigger={<Button type="button" size="sm" className="h-8 text-xs">Add Role</Button>}
+                        trigger={
+                            <Button type="button" size="sm" className="h-8 text-xs">
+                                <Plus className="size-4" aria-hidden="true" />
+                                Add Role
+                            </Button>
+                        }
                     />
                 </div>
 
@@ -111,38 +124,57 @@ export default function Roles({ roles = [], permissions = [] }) {
                                     <tr>
                                         <th className="px-4 py-3 text-xs font-semibold text-foreground">Name</th>
                                         <th className="px-4 py-3 text-xs font-semibold text-foreground">Permissions</th>
-                                        <th className="px-4 py-3 text-xs font-semibold text-foreground">Actions</th>
+                                        <th className="px-4 py-3 text-center text-xs font-semibold text-foreground">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-border bg-transparent">
                                     {roles.length > 0 ? (
                                         roles.map((role) => (
-                                            <tr key={role.id} className="border-b border-border/80">
+                                            <tr
+                                                key={role.id}
+                                                className={`border-b border-border/80 ${role.id === defaultRoleId ? 'outline outline-2 -outline-offset-2 outline-primary bg-primary/5' : ''}`}
+                                            >
                                                 <td className="px-4 py-3 text-sm text-foreground">{role.name}</td>
                                                 <td className="px-4 py-3 text-sm text-muted-foreground">
                                                     {role.permissions?.length > 0
-                                                        ? role.permissions.map((permission) => permission.name).join(', ')
+                                                        ? role.permissions
+                                                            .map((permission) => proposalVisibilityLabels[permission.name] ?? permission.name)
+                                                            .join(', ')
                                                         : 'No permissions assigned'}
                                                 </td>
-                                                <td className="px-4 py-3 text-sm text-foreground">
-                                                    <div className="flex flex-wrap gap-2">
+                                                <td className="px-4 py-3 text-center">
+                                                    <div className="flex justify-center gap-2">
+                                                        <Button
+                                                            variant={role.id === defaultRoleId ? 'default' : 'outline'}
+                                                            size="icon"
+                                                            type="button"
+                                                            onClick={() => setDefaultRole(role)}
+                                                            aria-label={role.id === defaultRoleId ? `${role.name} is the default role` : `Set ${role.name} as default role`}
+                                                            title={role.id === defaultRoleId ? `${role.name} is the default role` : `Set ${role.name} as default role`}
+                                                            disabled={role.id === defaultRoleId}
+                                                            className="size-7"
+                                                        >
+                                                            <Star className="size-3.5" />
+                                                        </Button>
                                                         <Button
                                                             variant="secondary"
-                                                            size="sm"
+                                                            size="icon"
                                                             type="button"
                                                             onClick={() => handleEdit(role)}
                                                             aria-label={`Edit role ${role.name}`}
-                                                            className="h-7 text-xs"
+                                                            title={`Edit role ${role.name}`}
+                                                            className="size-7"
                                                         >
                                                             <Edit3 className="size-3.5" />
                                                         </Button>
                                                         <Button
                                                             variant="destructive"
-                                                            size="sm"
+                                                            size="icon"
                                                             type="button"
                                                             onClick={() => setRoleToDelete(role)}
                                                             aria-label={`Delete role ${role.name}`}
-                                                            className="h-7 text-xs"
+                                                            title={`Delete role ${role.name}`}
+                                                            className="size-7"
                                                         >
                                                             <Trash2 className="size-3.5" />
                                                         </Button>

@@ -12,7 +12,7 @@ import {
     GitBranch,
     History,
     Loader2,
-    LoaderCircle,
+    MessageSquare,
     Plus,
     Eye,
     RefreshCw,
@@ -20,7 +20,7 @@ import {
     Upload,
     Zap,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 import DocumentUploadModal from '@/components/DocumentUploadModal';
 import PhasePipeline from '@/components/PhasePipeline';
@@ -34,6 +34,11 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import Tracking from '@/pages/Tenant/Proposals/Tracking';
@@ -68,6 +73,17 @@ type PhaseAction = {
     description?: string | null;
     requires_file?: boolean;
     documents?: RequiredDocument[];
+    reviewer_groups?:
+        | {
+              document_ids?: number[];
+              decision_document_sets?: {
+                  action_id: number;
+                  decision_id: string;
+                  document_ids: number[];
+                  role_ids?: number[];
+              }[];
+          }[]
+        | null;
 };
 
 type Proposal = {
@@ -90,6 +106,12 @@ type Proposal = {
         action: PhaseAction;
         decision: string | null;
         created_at: string;
+        rejected_documents?:
+            | {
+                  document_id: number;
+                  comment: string | null;
+              }[]
+            | null;
     }[];
     documents: {
         id: number;
@@ -107,8 +129,6 @@ type Props = {
     proposals: Proposal[];
     isTracking: boolean;
     currentStorageDriver: string;
-    viewerId: number;
-    viewerType: string;
     selectedProposalId: number | null;
 };
 
@@ -176,21 +196,38 @@ export default function Index({
     proposals,
     isTracking,
     currentStorageDriver,
-    viewerId,
-    viewerType,
     selectedProposalId,
 }: Props) {
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-    const [documentToView, setDocumentToView] =
-        useState<Proposal['documents'][number] | null>(null);
+    const [documentToView, setDocumentToView] = useState<
+        Proposal['documents'][number] | null
+    >(null);
     const [documentViewUrl, setDocumentViewUrl] = useState<string | null>(null);
     const [isLoadingDocumentView, setIsLoadingDocumentView] = useState(false);
+    const [reviewCommentDropdownWidths, setReviewCommentDropdownWidths] =
+        useState<Record<number, number>>({});
+    const [reviewCommentDropdownOffsets, setReviewCommentDropdownOffsets] =
+        useState<Record<number, number>>({});
+    const rejectedFileRowRefs = useRef<Record<number, HTMLLIElement | null>>(
+        {},
+    );
+    const rejectedCommentButtonRefs = useRef<
+        Record<number, HTMLButtonElement | null>
+    >({});
     const [isSwitchProposalModalOpen, setIsSwitchProposalModalOpen] =
         useState(false);
     const [proposalListTab, setProposalListTab] = useState<
         'active' | 'archived'
     >('active');
+
+    const handleViewProposalDocument = (
+        uploadedDocument: Proposal['documents'][number],
+    ) => {
+        setDocumentToView(uploadedDocument);
+        setIsLoadingDocumentView(true);
+        setDocumentViewUrl(`/tenant/documents/${uploadedDocument.id}/view`);
+    };
     const [activeProposalId, setActiveProposalId] = useState<number | null>(
         proposals.some((proposal) => proposal.id === selectedProposalId)
             ? selectedProposalId
@@ -216,7 +253,7 @@ export default function Index({
     );
     const proposalsInSelectedTab =
         proposalListTab === 'active' ? activeProposals : archivedProposals;
-    const isProposalLimitReached = proposals.length >= MAX_PROPOSALS;
+    const isProposalLimitReached = activeProposals.length >= MAX_PROPOSALS;
     const activeProposal =
         proposals.find((proposal) => proposal.id === activeProposalId) ??
         activeProposals[0] ??
@@ -259,7 +296,9 @@ export default function Index({
             ? `${activeProposal.id}:${selectedPhase.id}`
             : '';
     const requestedActionId = selectedActionIdByPhase[actionSelectionKey];
-    const latestCompletedAction = [...(activeProposal?.action_transitions ?? [])]
+    const latestCompletedAction = [
+        ...(activeProposal?.action_transitions ?? []),
+    ]
         .reverse()
         .find((transition) =>
             selectedPhaseActions.some(
@@ -289,7 +328,7 @@ export default function Index({
     const pipelinePhases = proposalPhases.map((phase, index) => {
         const isCurrent = phase.id === activeProposal?.current_phase?.id;
         const isComplete = activePhaseIndex >= 0 && index < activePhaseIndex;
-//asdasd
+        //asdasd
 
         return {
             ...phase,
@@ -337,10 +376,53 @@ export default function Index({
           )
         : [];
     const requiredDocuments = new Map<number, RequiredDocument>();
+    const orderedActionTransitions = [
+        ...(activeProposal?.action_transitions ?? []),
+    ].sort(
+        (first, second) =>
+            new Date(first.created_at).getTime() -
+                new Date(second.created_at).getTime() || first.id - second.id,
+    );
+    const activeActionTransitionIndex = orderedActionTransitions.findIndex(
+        (transition) => transition.action.id === activeAction?.id,
+    );
+    const mostRecentDecisionBeforeActiveAction = orderedActionTransitions
+        .slice(
+            0,
+            activeActionTransitionIndex >= 0
+                ? activeActionTransitionIndex
+                : orderedActionTransitions.length,
+        )
+        .filter((transition) => transition.decision !== null)
+        .at(-1);
+    const assignedDocumentGroups = activeAction?.reviewer_groups ?? [];
+    const decisionDocumentSets = assignedDocumentGroups.flatMap(
+        (group) => group.decision_document_sets ?? [],
+    );
+    const applicableDocumentIds = decisionDocumentSets.length
+        ? new Set([
+              ...assignedDocumentGroups.flatMap(
+                  (group) => group.document_ids ?? [],
+              ),
+              ...decisionDocumentSets.flatMap((set) =>
+                  mostRecentDecisionBeforeActiveAction?.action.id ===
+                      set.action_id &&
+                  mostRecentDecisionBeforeActiveAction.decision ===
+                      set.decision_id
+                      ? set.document_ids
+                      : [],
+              ),
+          ])
+        : null;
 
     (activeAction ? [activeAction] : selectedPhaseActions).forEach((action) => {
         action.documents?.forEach((document: RequiredDocument) => {
-            requiredDocuments.set(document.id, document);
+            if (
+                !applicableDocumentIds ||
+                applicableDocumentIds.has(document.id)
+            ) {
+                requiredDocuments.set(document.id, document);
+            }
         });
     });
     const phaseDocuments = Array.from(requiredDocuments.values());
@@ -358,6 +440,22 @@ export default function Index({
                 : [Number(document.pivot.required_document_id)],
         ),
     );
+    const rejectedDocumentsById = new Map<number, string | null>();
+
+    [...(activeProposal?.action_transitions ?? [])]
+        .sort(
+            (first, second) =>
+                new Date(first.created_at).getTime() -
+                new Date(second.created_at).getTime(),
+        )
+        .forEach((transition) => {
+            transition.rejected_documents?.forEach((rejectedDocument) => {
+                rejectedDocumentsById.set(
+                    rejectedDocument.document_id,
+                    rejectedDocument.comment,
+                );
+            });
+        });
 
     const handleUploadRequiredFile = async (
         requiredDocumentId: number,
@@ -377,6 +475,7 @@ export default function Index({
         const formData = new FormData();
         formData.append('phase_id', String(selectedPhase.id));
         formData.append('required_document_id', String(requiredDocumentId));
+
         if (replaceDocumentId !== undefined) {
             formData.append('replace_document_id', String(replaceDocumentId));
         }
@@ -426,9 +525,7 @@ export default function Index({
                     throw new Error(
                         String(
                             uploadData.error ||
-                                JSON.stringify(
-                                    uploadData.errors || uploadData,
-                                ),
+                                JSON.stringify(uploadData.errors || uploadData),
                         ),
                     );
                 }
@@ -468,8 +565,7 @@ export default function Index({
                         }),
                     },
                 );
-                const completeData =
-                    await readUploadResponse(completeResponse);
+                const completeData = await readUploadResponse(completeResponse);
 
                 if (!completeResponse.ok) {
                     throw new Error(
@@ -528,42 +624,6 @@ export default function Index({
         );
     };
 
-    const handleViewProposalDocument = async (
-        uploadedDocument: Proposal['documents'][number],
-    ) => {
-        setDocumentToView(uploadedDocument);
-        setDocumentViewUrl(null);
-        setIsLoadingDocumentView(true);
-
-        try {
-            const response = await fetch(
-                `/tenant/documents/${uploadedDocument.id}/view-url`,
-                { headers: { Accept: 'application/json' } },
-            );
-            const data = (await response.json()) as {
-                url?: string;
-                error?: string;
-            };
-
-            if (!response.ok || !data.url) {
-                throw new Error(
-                    data.error || 'Unable to load document preview.',
-                );
-            }
-
-            setDocumentViewUrl(data.url);
-        } catch (error) {
-            setDocumentToView(null);
-            toast.error(
-                error instanceof Error
-                    ? error.message
-                    : 'Unable to load document preview.',
-            );
-        } finally {
-            setIsLoadingDocumentView(false);
-        }
-    };
-
     const handleSubmitAction = () => {
         if (
             !activeProposal ||
@@ -614,8 +674,7 @@ export default function Index({
         return (
             <Tracking
                 proposals={proposals}
-                viewerId={viewerId}
-                viewerType={viewerType}
+                currentStorageDriver={currentStorageDriver}
             />
         );
     }
@@ -637,8 +696,11 @@ export default function Index({
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">
-                        {proposals.length}/{MAX_PROPOSALS} proposals
+                    <span className="flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
+                        <span className="font-semibold text-foreground">
+                            {activeProposals.length}/{MAX_PROPOSALS} active
+                        </span>
+                        <span>proposals</span>
                     </span>
                     <Button
                         onClick={() => setIsCreateModalOpen(true)}
@@ -646,7 +708,7 @@ export default function Index({
                         disabled={isProposalLimitReached}
                         title={
                             isProposalLimitReached
-                                ? `You can create up to ${MAX_PROPOSALS} proposals.`
+                                ? `You can have up to ${MAX_PROPOSALS} active proposals.`
                                 : undefined
                         }
                     >
@@ -835,81 +897,81 @@ export default function Index({
                                                 </Badge>
                                                 {availableActions.length > 1 ? (
                                                     <div className="flex shrink-0 items-center gap-0.5">
-                                                    <Button
-                                                        type="button"
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="size-7"
-                                                        disabled={
-                                                            activeActionIndex <=
-                                                            0
-                                                        }
-                                                        aria-label="View previous action"
-                                                        title="Previous action"
-                                                        onClick={() => {
-                                                            const action =
-                                                                availableActions[
-                                                                    activeActionIndex -
-                                                                        1
-                                                                ];
-
-                                                            if (
-                                                                action &&
-                                                                actionSelectionKey
-                                                            ) {
-                                                                setSelectedActionIdByPhase(
-                                                                    (
-                                                                        current,
-                                                                    ) => ({
-                                                                        ...current,
-                                                                        [actionSelectionKey]:
-                                                                            action.id,
-                                                                    }),
-                                                                );
+                                                        <Button
+                                                            asChild
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="size-7"
+                                                            disabled={
+                                                                activeActionIndex <=
+                                                                0
                                                             }
-                                                        }}
-                                                    >
-                                                        <ChevronLeft className="size-4" />
-                                                    </Button>
-                                                    <Button
-                                                        type="button"
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="size-7"
-                                                        disabled={
-                                                            activeActionIndex <
-                                                                0 ||
-                                                            activeActionIndex >=
-                                                                availableActions.length -
-                                                                    1
-                                                        }
-                                                        aria-label="View next action"
-                                                        title="Next action"
-                                                        onClick={() => {
-                                                            const action =
-                                                                availableActions[
-                                                                    activeActionIndex +
-                                                                        1
-                                                                ];
+                                                            aria-label="View previous action"
+                                                            title="Previous action"
+                                                            onClick={() => {
+                                                                const action =
+                                                                    availableActions[
+                                                                        activeActionIndex -
+                                                                            1
+                                                                    ];
 
-                                                            if (
-                                                                action &&
-                                                                actionSelectionKey
-                                                            ) {
-                                                                setSelectedActionIdByPhase(
-                                                                    (
-                                                                        current,
-                                                                    ) => ({
-                                                                        ...current,
-                                                                        [actionSelectionKey]:
-                                                                            action.id,
-                                                                    }),
-                                                                );
+                                                                if (
+                                                                    action &&
+                                                                    actionSelectionKey
+                                                                ) {
+                                                                    setSelectedActionIdByPhase(
+                                                                        (
+                                                                            current,
+                                                                        ) => ({
+                                                                            ...current,
+                                                                            [actionSelectionKey]:
+                                                                                action.id,
+                                                                        }),
+                                                                    );
+                                                                }
+                                                            }}
+                                                        >
+                                                            <ChevronLeft className="size-4" />
+                                                        </Button>
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            className="size-7"
+                                                            disabled={
+                                                                activeActionIndex <
+                                                                    0 ||
+                                                                activeActionIndex >=
+                                                                    availableActions.length -
+                                                                        1
                                                             }
-                                                        }}
-                                                    >
-                                                        <ChevronRight className="size-4" />
-                                                    </Button>
+                                                            aria-label="View next action"
+                                                            title="Next action"
+                                                            onClick={() => {
+                                                                const action =
+                                                                    availableActions[
+                                                                        activeActionIndex +
+                                                                            1
+                                                                    ];
+
+                                                                if (
+                                                                    action &&
+                                                                    actionSelectionKey
+                                                                ) {
+                                                                    setSelectedActionIdByPhase(
+                                                                        (
+                                                                            current,
+                                                                        ) => ({
+                                                                            ...current,
+                                                                            [actionSelectionKey]:
+                                                                                action.id,
+                                                                        }),
+                                                                    );
+                                                                }
+                                                            }}
+                                                        >
+                                                            <ChevronRight className="size-4" />
+                                                        </Button>
                                                     </div>
                                                 ) : null}
                                             </div>
@@ -944,20 +1006,48 @@ export default function Index({
                                                                             ) ===
                                                                             document.id,
                                                                     );
+                                                                const isRejectedDocument =
+                                                                    submittedDocument !==
+                                                                        undefined &&
+                                                                    rejectedDocumentsById.has(
+                                                                        submittedDocument.id,
+                                                                    );
+                                                                const rejectedDocumentComment =
+                                                                    submittedDocument
+                                                                        ? rejectedDocumentsById.get(
+                                                                              submittedDocument.id,
+                                                                          )
+                                                                        : null;
 
                                                                 return (
                                                                     <li
                                                                         key={
                                                                             document.id
                                                                         }
+                                                                        ref={(
+                                                                            element,
+                                                                        ) => {
+                                                                            if (
+                                                                                submittedDocument
+                                                                            ) {
+                                                                                rejectedFileRowRefs.current[
+                                                                                    submittedDocument.id
+                                                                                ] =
+                                                                                    element;
+                                                                            }
+                                                                        }}
                                                                         className={`flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 ${
-                                                                            submittedDocument
-                                                                                ? 'border-primary bg-primary/5'
-                                                                                : 'border-border'
+                                                                            isRejectedDocument
+                                                                                ? 'border-destructive bg-destructive/5 ring-1 ring-destructive'
+                                                                                : submittedDocument
+                                                                                  ? 'border-primary bg-primary/5'
+                                                                                  : 'border-border'
                                                                         }`}
                                                                     >
                                                                         <div className="flex min-w-0 items-center gap-3">
-                                                                            {submittedDocument ? (
+                                                                            {isRejectedDocument ? (
+                                                                                <FileText className="size-4 shrink-0 text-destructive" />
+                                                                            ) : submittedDocument ? (
                                                                                 <CheckCircle2 className="size-4 shrink-0 text-primary" />
                                                                             ) : (
                                                                                 <FileText className="size-4 shrink-0 text-muted-foreground" />
@@ -969,13 +1059,137 @@ export default function Index({
                                                                                     }
                                                                                 </p>
                                                                                 <p className="truncate text-xs text-muted-foreground">
-                                                                                    {submittedDocument
-                                                                                        ? 'File uploaded'
-                                                                                        : 'Not uploaded'}
+                                                                                    {isRejectedDocument
+                                                                                        ? 'File rejected'
+                                                                                        : submittedDocument
+                                                                                          ? 'File uploaded'
+                                                                                          : 'Not uploaded'}
                                                                                 </p>
                                                                             </div>
                                                                         </div>
                                                                         <div className="flex shrink-0 items-center gap-1">
+                                                                            {isRejectedDocument ? (
+                                                                                <DropdownMenu
+                                                                                    onOpenChange={(
+                                                                                        open,
+                                                                                    ) => {
+                                                                                        if (
+                                                                                            !open ||
+                                                                                            !submittedDocument
+                                                                                        ) {
+                                                                                            return;
+                                                                                        }
+
+                                                                                        const row =
+                                                                                            rejectedFileRowRefs
+                                                                                                .current[
+                                                                                                submittedDocument
+                                                                                                    .id
+                                                                                            ];
+                                                                                        const trigger =
+                                                                                            rejectedCommentButtonRefs
+                                                                                                .current[
+                                                                                                submittedDocument
+                                                                                                    .id
+                                                                                            ];
+
+                                                                                        if (
+                                                                                            row &&
+                                                                                            trigger
+                                                                                        ) {
+                                                                                            setReviewCommentDropdownWidths(
+                                                                                                (
+                                                                                                    current,
+                                                                                                ) => ({
+                                                                                                    ...current,
+                                                                                                    [submittedDocument.id]:
+                                                                                                        row.offsetWidth,
+                                                                                                }),
+                                                                                            );
+                                                                                            setReviewCommentDropdownOffsets(
+                                                                                                (
+                                                                                                    current,
+                                                                                                ) => ({
+                                                                                                    ...current,
+                                                                                                    [submittedDocument.id]:
+                                                                                                        row.getBoundingClientRect()
+                                                                                                            .left -
+                                                                                                        trigger.getBoundingClientRect()
+                                                                                                            .left,
+                                                                                                }),
+                                                                                            );
+                                                                                        }
+                                                                                    }}
+                                                                                >
+                                                                                    <DropdownMenuTrigger
+                                                                                        asChild
+                                                                                    >
+                                                                                        <Button
+                                                                                            ref={(
+                                                                                                element,
+                                                                                            ) => {
+                                                                                                if (
+                                                                                                    submittedDocument
+                                                                                                ) {
+                                                                                                    rejectedCommentButtonRefs.current[
+                                                                                                        submittedDocument.id
+                                                                                                    ] =
+                                                                                                        element;
+                                                                                                }
+                                                                                            }}
+                                                                                            type="button"
+                                                                                            variant="ghost"
+                                                                                            size="icon"
+                                                                                            className={`relative size-8 shrink-0 ${
+                                                                                                rejectedDocumentComment?.trim()
+                                                                                                    ? 'border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+                                                                                                    : 'text-destructive hover:bg-destructive/10'
+                                                                                            }`}
+                                                                                            aria-label={`View reviewer comment for ${document.name}`}
+                                                                                            title="View reviewer comment"
+                                                                                        >
+                                                                                            <MessageSquare className="size-4" />
+                                                                                            {rejectedDocumentComment?.trim() ? (
+                                                                                                <span className="absolute top-1 right-1 block size-2 rounded-full bg-amber-500 ring-2 ring-background" />
+                                                                                            ) : null}
+                                                                                        </Button>
+                                                                                    </DropdownMenuTrigger>
+                                                                                    <DropdownMenuContent
+                                                                                        side="top"
+                                                                                        align="start"
+                                                                                        alignOffset={
+                                                                                            submittedDocument
+                                                                                                ? (reviewCommentDropdownOffsets[
+                                                                                                      submittedDocument
+                                                                                                          .id
+                                                                                                  ] ??
+                                                                                                  0)
+                                                                                                : 0
+                                                                                        }
+                                                                                        sideOffset={
+                                                                                            20
+                                                                                        }
+                                                                                        style={{
+                                                                                            width: submittedDocument
+                                                                                                ? reviewCommentDropdownWidths[
+                                                                                                      submittedDocument
+                                                                                                          .id
+                                                                                                  ]
+                                                                                                : undefined,
+                                                                                        }}
+                                                                                        className="p-3 whitespace-normal"
+                                                                                    >
+                                                                                        <p className="mb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                                                                                            Reviewer
+                                                                                            comment
+                                                                                        </p>
+                                                                                        <p className="custom-scrollbar max-h-20 overflow-y-auto text-sm break-words whitespace-pre-wrap">
+                                                                                            {rejectedDocumentComment?.trim() ||
+                                                                                                'No comment was added.'}
+                                                                                        </p>
+                                                                                    </DropdownMenuContent>
+                                                                                </DropdownMenu>
+                                                                            ) : null}
                                                                             {submittedDocument ? (
                                                                                 <Button
                                                                                     type="button"
@@ -994,55 +1208,63 @@ export default function Index({
                                                                                 </Button>
                                                                             ) : null}
                                                                             {!canUploadSelectedAction ? null : (
-                                                                            <DocumentUploadModal
-                                                                                title={`${submittedDocument ? 'Replace' : 'Upload'} ${document.name}`}
-                                                                                description={`${submittedDocument ? 'Choose a replacement file' : 'Upload the file'} required for ${activeAction?.name ?? selectedPhaseName}.`}
-                                                                                submitLabel={submittedDocument ? 'Replace file' : 'Upload file'}
-                                                                                uploadProgress={
-                                                                                    uploadProgress
-                                                                                }
-                                                                                showName={
-                                                                                    false
-                                                                                }
-                                                                                showType={
-                                                                                    false
-                                                                                }
-                                                                                expectedType={
-                                                                                    document.file_type
-                                                                                }
-                                                                                initialValues={{
-                                                                                    name: document.name,
-                                                                                    label: document.label,
-                                                                                }}
-                                                                                onSubmit={({
-                                                                                    files,
-                                                                                }: {
-                                                                                    files: File[];
-                                                                                }) =>
-                                                                                    handleUploadRequiredFile(
-                                                                                        document.id,
-                                                                                        document.name,
+                                                                                <DocumentUploadModal
+                                                                                    title={`${submittedDocument ? 'Replace' : 'Upload'} ${document.name}`}
+                                                                                    description={`${submittedDocument ? 'Choose a replacement file' : 'Upload the file'} required for ${activeAction?.name ?? selectedPhaseName}.`}
+                                                                                    submitLabel={
+                                                                                        submittedDocument
+                                                                                            ? 'Replace file'
+                                                                                            : 'Upload file'
+                                                                                    }
+                                                                                    uploadProgress={
+                                                                                        uploadProgress
+                                                                                    }
+                                                                                    showName={
+                                                                                        false
+                                                                                    }
+                                                                                    showType={
+                                                                                        false
+                                                                                    }
+                                                                                    expectedType={
+                                                                                        document.file_type
+                                                                                    }
+                                                                                    initialValues={{
+                                                                                        name: document.name,
+                                                                                        label: document.label,
+                                                                                    }}
+                                                                                    onSubmit={({
                                                                                         files,
-                                                                                        submittedDocument?.id,
-                                                                                    )
-                                                                                }
-                                                                                trigger={
-                                                                                    <Button
-                                                                                        type="button"
-                                                                                        variant="outline"
-                                                                                        size="sm"
-                                                                                        className="size-8 shrink-0 p-0"
-                                                                                        aria-label={`${submittedDocument ? 'Replace' : 'Upload'} ${document.name}`}
-                                                                                        title={submittedDocument ? 'Replace file' : 'Upload file'}
-                                                                                    >
-                                                                                        {submittedDocument ? (
-                                                                                            <RefreshCw className="size-3.5" />
-                                                                                        ) : (
-                                                                                            <Upload className="size-3.5" />
-                                                                                        )}
-                                                                                    </Button>
-                                                                                }
-                                                                            />
+                                                                                    }: {
+                                                                                        files: File[];
+                                                                                    }) =>
+                                                                                        handleUploadRequiredFile(
+                                                                                            document.id,
+                                                                                            document.name,
+                                                                                            files,
+                                                                                            submittedDocument?.id,
+                                                                                        )
+                                                                                    }
+                                                                                    trigger={
+                                                                                        <Button
+                                                                                            type="button"
+                                                                                            variant="outline"
+                                                                                            size="sm"
+                                                                                            className="size-8 shrink-0 p-0"
+                                                                                            aria-label={`${submittedDocument ? 'Replace' : 'Upload'} ${document.name}`}
+                                                                                            title={
+                                                                                                submittedDocument
+                                                                                                    ? 'Replace file'
+                                                                                                    : 'Upload file'
+                                                                                            }
+                                                                                        >
+                                                                                            {submittedDocument ? (
+                                                                                                <RefreshCw className="size-3.5" />
+                                                                                            ) : (
+                                                                                                <Upload className="size-3.5" />
+                                                                                            )}
+                                                                                        </Button>
+                                                                                    }
+                                                                                />
                                                                             )}
                                                                         </div>
                                                                     </li>
@@ -1160,7 +1382,8 @@ export default function Index({
                         <DialogDescription>
                             Choose a proposal to view its workflow and activity.
                             <span className="ml-1">
-                                {proposals.length} of {MAX_PROPOSALS} proposals
+                                {activeProposals.length} of {MAX_PROPOSALS}{' '}
+                                active proposals
                             </span>
                         </DialogDescription>
                     </DialogHeader>
@@ -1364,6 +1587,7 @@ export default function Index({
                     if (!open) {
                         setDocumentToView(null);
                         setDocumentViewUrl(null);
+                        setIsLoadingDocumentView(false);
                     }
                 }}
             >
@@ -1376,42 +1600,41 @@ export default function Index({
                             Previewing the document from secure storage.
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border bg-muted">
-                        {isLoadingDocumentView ? (
-                            <div
-                                className="flex h-full flex-col items-center justify-center gap-5 p-6 text-center"
-                                role="status"
-                                aria-live="polite"
-                            >
-                                <div className="flex size-16 items-center justify-center rounded-full bg-background shadow-sm">
-                                    <LoaderCircle
-                                        className="size-7 animate-spin text-primary"
-                                        aria-hidden="true"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <p className="text-sm font-medium text-foreground">
-                                        Preparing preview
-                                    </p>
-                                    <p className="text-sm text-muted-foreground">
-                                        Connecting to secure storage...
-                                    </p>
-                                </div>
-                                <div className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-background">
-                                    <div className="h-full w-1/2 animate-pulse rounded-full bg-primary" />
-                                </div>
-                            </div>
-                        ) : documentViewUrl ? (
+                    <div className="relative min-h-0 flex-1 overflow-hidden rounded-md border border-border bg-muted">
+                        {documentViewUrl ? (
                             <iframe
                                 src={documentViewUrl}
                                 title={`Preview ${documentToView?.name ?? 'document'}`}
                                 className="h-full min-h-[24rem] w-full border-0"
+                                onLoad={() => setIsLoadingDocumentView(false)}
                             />
                         ) : (
                             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                                 Preview unavailable.
                             </div>
                         )}
+                        {isLoadingDocumentView ? (
+                            <div
+                                className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-5 bg-background/90 p-6 text-center"
+                                role="status"
+                                aria-live="polite"
+                            >
+                                <p className="text-sm font-medium text-foreground">
+                                    Loading document
+                                </p>
+                                <div
+                                    className="h-2 w-full max-w-md overflow-hidden rounded-full bg-muted"
+                                    role="progressbar"
+                                    aria-label="Loading document preview"
+                                >
+                                    <div className="preview-progress-bar h-full w-1/3 rounded-full bg-primary" />
+                                </div>
+                                <p className="text-sm text-muted-foreground">
+                                    The preview will appear when the file is
+                                    ready.
+                                </p>
+                            </div>
+                        ) : null}
                     </div>
                 </DialogContent>
             </Dialog>

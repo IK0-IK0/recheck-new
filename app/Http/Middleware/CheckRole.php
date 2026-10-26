@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\SuperadminTenantUser;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -19,7 +20,10 @@ class CheckRole
      */
     public function handle(Request $request, Closure $next, string ...$roles): Response
     {
-        $userRoles = Auth::user()?->roles()->pluck('name') ?? collect();
+        $user = Auth::user();
+        $userRoles = $user instanceof SuperadminTenantUser
+            ? $user->tenantRoles()->pluck('name')
+            : ($user?->roles()->pluck('name') ?? collect());
 
         foreach ($roles as $role) {
             if ($userRoles->contains($role)) {

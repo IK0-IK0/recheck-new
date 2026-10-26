@@ -9,7 +9,6 @@ import {
     FileText,
     FileSpreadsheet,
     FileType2,
-    LoaderCircle,
     Search,
     Trash2,
     X,
@@ -354,42 +353,6 @@ export default function DocumentManagement({
         });
     };
 
-    const handleView = async (document: DocumentRecord) => {
-        setDocumentToView(document);
-        setDocumentViewUrl(null);
-        setIsLoadingDocumentView(true);
-
-        try {
-            const response = await fetch(
-                `/tenant/documents/${document.id}/view-url`,
-                {
-                    headers: { Accept: 'application/json' },
-                },
-            );
-            const data = (await response.json()) as {
-                url?: string;
-                error?: string;
-            };
-
-            if (!response.ok || !data.url) {
-                throw new Error(
-                    data.error || 'Unable to load document preview.',
-                );
-            }
-
-            setDocumentViewUrl(data.url);
-        } catch (error) {
-            setDocumentToView(null);
-            toast.error(
-                error instanceof Error
-                    ? error.message
-                    : 'Unable to load document preview.',
-            );
-        } finally {
-            setIsLoadingDocumentView(false);
-        }
-    };
-
     const handleDelete = () => {
         if (!documentToDelete) {
             return;
@@ -473,6 +436,38 @@ export default function DocumentManagement({
         setSortDirection('asc');
     };
 
+    const handleView = async (document: DocumentRecord) => {
+        setDocumentToView(document);
+        setDocumentViewUrl(null);
+        setIsLoadingDocumentView(true);
+
+        try {
+            const response = await fetch(
+                `/tenant/documents/${document.id}/view-url`,
+                {
+                    headers: { Accept: 'application/json' },
+                },
+            );
+            const data = await readJsonResponse(response);
+
+            if (!response.ok || typeof data.url !== 'string') {
+                throw new Error(
+                    String(data.error || 'Unable to load document preview.'),
+                );
+            }
+
+            setDocumentViewUrl(data.url);
+        } catch (error) {
+            setDocumentToView(null);
+            setIsLoadingDocumentView(false);
+            toast.error(
+                error instanceof Error
+                    ? error.message
+                    : 'Unable to load document preview.',
+            );
+        }
+    };
+
     const sortIcon = (column: SortColumn) => {
         if (sortColumn !== column) {
             return (
@@ -491,10 +486,7 @@ export default function DocumentManagement({
     };
 
     return (
-        <Dialog
-            open={documentToDelete !== null}
-            onOpenChange={(open) => !open && setDocumentToDelete(null)}
-        >
+        <>
             <div className="flex h-full flex-col">
                 <div className="bg-surface flex items-center justify-between border-b border-border px-6 py-3">
                     <div className="flex items-center gap-3">
@@ -666,13 +658,17 @@ export default function DocumentManagement({
                                                             size="icon"
                                                             className="size-7"
                                                             type="button"
-                                                            onClick={() =>
-                                                                handleView(
-                                                                    document,
-                                                                )
-                                                            }
                                                             aria-label={`View ${document.name}`}
                                                             title="View document"
+                                                            onClick={(
+                                                                event,
+                                                            ) => {
+                                                                event.preventDefault();
+                                                                event.stopPropagation();
+                                                                void handleView(
+                                                                    document,
+                                                                );
+                                                            }}
                                                         >
                                                             <Eye className="size-3.5" />
                                                         </Button>
@@ -749,37 +745,43 @@ export default function DocumentManagement({
                 </div>
             </div>
 
-            <DialogContent className="sm:max-w-md">
-                <DialogHeader>
-                    <DialogTitle>Delete document?</DialogTitle>
-                    <DialogDescription>
-                        This will permanently delete{' '}
-                        <span className="font-medium text-foreground">
-                            {documentToDelete?.name}
-                        </span>
-                        .
-                    </DialogDescription>
-                </DialogHeader>
+            <Dialog
+                open={documentToDelete !== null}
+                onOpenChange={(open) => !open && setDocumentToDelete(null)}
+            >
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Delete document?</DialogTitle>
+                        <DialogDescription>
+                            This will permanently delete{' '}
+                            <span className="font-medium text-foreground">
+                                {documentToDelete?.name}
+                            </span>
+                            .
+                        </DialogDescription>
+                    </DialogHeader>
 
-                <DialogFooter>
-                    <DialogClose asChild>
-                        <Button variant="outline">Cancel</Button>
-                    </DialogClose>
-                    <Button
-                        variant="destructive"
-                        onClick={handleDelete}
-                        data-test="confirm-delete-document-button"
-                    >
-                        Delete document
-                    </Button>
-                </DialogFooter>
-            </DialogContent>
+                    <DialogFooter>
+                        <DialogClose asChild>
+                            <Button variant="outline">Cancel</Button>
+                        </DialogClose>
+                        <Button
+                            variant="destructive"
+                            onClick={handleDelete}
+                            data-test="confirm-delete-document-button"
+                        >
+                            Delete document
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
             <Dialog
                 open={documentToView !== null}
                 onOpenChange={(open) => {
                     if (!open) {
                         setDocumentToView(null);
                         setDocumentViewUrl(null);
+                        setIsLoadingDocumentView(false);
                     }
                 }}
             >
@@ -792,46 +794,44 @@ export default function DocumentManagement({
                             Previewing the document from secure storage.
                         </DialogDescription>
                     </DialogHeader>
-
-                    <div className="min-h-0 flex-1 overflow-hidden rounded-md border border-border bg-muted">
-                        {isLoadingDocumentView ? (
-                            <div
-                                className="flex h-full flex-col items-center justify-center gap-5 p-6 text-center"
-                                role="status"
-                                aria-live="polite"
-                            >
-                                <div className="flex size-16 items-center justify-center rounded-full bg-background shadow-sm">
-                                    <LoaderCircle
-                                        className="size-7 animate-spin text-primary"
-                                        aria-hidden="true"
-                                    />
-                                </div>
-                                <div className="space-y-2">
-                                    <p className="text-sm font-medium text-foreground">
-                                        Preparing preview
-                                    </p>
-                                    <p className="text-sm text-muted-foreground">
-                                        Connecting to secure storage...
-                                    </p>
-                                </div>
-                                <div className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-background">
-                                    <div className="h-full w-1/2 animate-pulse rounded-full bg-primary" />
-                                </div>
-                            </div>
-                        ) : documentViewUrl ? (
+                    <div className="relative min-h-0 flex-1 overflow-hidden rounded-md border border-border bg-muted">
+                        {documentViewUrl ? (
                             <iframe
                                 src={documentViewUrl}
                                 title={`Preview ${documentToView?.name ?? 'document'}`}
                                 className="h-full min-h-[24rem] w-full border-0"
+                                onLoad={() => setIsLoadingDocumentView(false)}
                             />
-                        ) : (
+                        ) : null}
+                        {isLoadingDocumentView ? (
+                            <div
+                                className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-5 bg-background/90 p-6 text-center"
+                                role="status"
+                                aria-live="polite"
+                            >
+                                <p className="text-sm font-medium text-foreground">
+                                    Loading document
+                                </p>
+                                <div
+                                    className="h-2 w-full max-w-md overflow-hidden rounded-full bg-muted"
+                                    role="progressbar"
+                                    aria-label="Loading document preview"
+                                >
+                                    <div className="preview-progress-bar h-full w-1/3 rounded-full bg-primary" />
+                                </div>
+                                <p className="text-sm text-muted-foreground">
+                                    The preview will appear when the file is
+                                    ready.
+                                </p>
+                            </div>
+                        ) : !documentViewUrl ? (
                             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                                 Preview unavailable.
                             </div>
-                        )}
+                        ) : null}
                     </div>
                 </DialogContent>
             </Dialog>
-        </Dialog>
+        </>
     );
 }

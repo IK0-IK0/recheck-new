@@ -67,11 +67,12 @@ class HandleInertiaRequests extends Middleware
         if ($user !== null && method_exists($user, 'roles')) {
             try {
                 if (Schema::connection('tenant')->hasTable('roles')) {
-                    $roles = $user->roles()->pluck('name')->all();
+                    $assignedRoles = $user instanceof SuperadminTenantUser
+                        ? $user->tenantRoles()
+                        : $user->roles()->with('permissions')->get();
 
-                    $permissions = $user->roles()
-                        ->with('permissions')
-                        ->get()
+                    $roles = $assignedRoles->pluck('name')->all();
+                    $permissions = $assignedRoles
                         ->pluck('permissions.*.name')
                         ->flatten()
                         ->unique()

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Document;
 use App\Models\StorageConfig;
 use Aws\S3\S3Client;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -13,6 +14,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
+use Symfony\Component\HttpFoundation\Response as HttpResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Throwable;
 
@@ -287,9 +289,21 @@ class DocumentManagementController extends Controller
         return $disk->download($document->file_path, $downloadName);
     }
 
-    public function view(Document $document): StreamedResponse
+    public function view(Document $document): HttpResponse
     {
-        $disk = Storage::disk($document->storage_driver ?? 'local');
+        $driver = $document->storage_driver ?? 'local';
+        $disk = $this->getDocumentDisk($driver);
+
+        if (in_array($driver, ['s3', 'supabase'], true)) {
+            return redirect()->away($disk->temporaryUrl(
+                $document->file_path,
+                now()->addMinutes(5),
+                [
+                    'ResponseContentDisposition' => 'inline',
+                    'ResponseContentType' => $document->file_type,
+                ],
+            ));
+        }
 
         if (! $disk->exists($document->file_path)) {
             abort(404);
@@ -310,13 +324,10 @@ class DocumentManagementController extends Controller
 
     public function viewUrl(Document $document): JsonResponse
     {
-        $disk = Storage::disk($document->storage_driver ?? 'local');
+        $driver = $document->storage_driver ?? 'local';
+        $disk = $this->getDocumentDisk($driver);
 
-        if (! $disk->exists($document->file_path)) {
-            abort(404);
-        }
-
-        if (in_array($document->storage_driver, ['s3', 'supabase'], true)) {
+        if (in_array($driver, ['s3', 'supabase'], true)) {
             return response()->json([
                 'url' => $disk->temporaryUrl($document->file_path, now()->addMinutes(5), [
                     'ResponseContentDisposition' => 'inline',
@@ -325,9 +336,24 @@ class DocumentManagementController extends Controller
             ]);
         }
 
+        if (! $disk->exists($document->file_path)) {
+            abort(404);
+        }
+
         return response()->json([
             'url' => route('tenant.documents.view', $document),
         ]);
+    }
+
+    private function getDocumentDisk(string $driver): FilesystemAdapter
+    {
+        $storageConfig = StorageConfig::activeForCurrentUser();
+
+        if ($storageConfig && $storageConfig->driver === $driver && $driver !== 'supabase') {
+            return Storage::build($storageConfig->toFilesystemConfig());
+        }
+
+        return Storage::disk($driver);
     }
 
     /**

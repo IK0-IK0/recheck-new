@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
+import { Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Spinner } from '@/components/ui/spinner';
 import {
     Dialog,
     DialogClose,
@@ -15,7 +17,49 @@ import {
 
 const defaultRoleInitialValues = { name: '', permissions: [] };
 
-const visibilityPermissionPattern = /(proposal|file).*(all|assigned|own)|(all|assigned|own).*(proposal|file)/i;
+const proposalVisibilityOptions = {
+    'proposal.view.all': {
+        label: 'Full',
+        description: 'Can view and oversee every proposal in the institution.',
+    },
+    'proposal.view.own_or_assigned': {
+        label: 'Scoped',
+        description: 'Can view proposals they own or that are assigned to one of their roles.',
+    },
+};
+
+const legacyProposalVisibilityPermissions = ['proposal.view.own', 'proposal.view.assigned'];
+
+const isProposalVisibilityPermission = (permission) =>
+    Object.hasOwn(proposalVisibilityOptions, permission.name)
+    || legacyProposalVisibilityPermissions.includes(permission.name);
+
+const getInitialRoleValues = (initialValues, permissions) => {
+    const initialPermissions = initialValues.permissions ?? [];
+    const legacyVisibilityPermissionIds = permissions
+        .filter((permission) => legacyProposalVisibilityPermissions.includes(permission.name))
+        .map((permission) => permission.id);
+    const canonicalVisibilityPermissionIds = permissions
+        .filter((permission) => Object.hasOwn(proposalVisibilityOptions, permission.name))
+        .map((permission) => permission.id);
+    const hasCanonicalVisibilityPermission = initialPermissions.some((permissionId) =>
+        canonicalVisibilityPermissionIds.includes(permissionId),
+    );
+    const defaultVisibilityPermission = permissions.find(
+        (permission) => permission.name === 'proposal.view.own_or_assigned',
+    );
+    const preservedPermissions = initialPermissions.filter(
+        (permissionId) => !legacyVisibilityPermissionIds.includes(permissionId),
+    );
+
+    return {
+        ...defaultRoleInitialValues,
+        ...initialValues,
+        permissions: hasCanonicalVisibilityPermission || !defaultVisibilityPermission
+            ? preservedPermissions
+            : [...preservedPermissions, defaultVisibilityPermission.id],
+    };
+};
 
 export default function RoleModal({
     title = 'Create role',
@@ -29,7 +73,7 @@ export default function RoleModal({
     onSubmit,
 }) {
     const [internalOpen, setInternalOpen] = useState(false);
-    const [values, setValues] = useState(initialValues);
+    const [values, setValues] = useState(() => getInitialRoleValues(initialValues, permissions));
     const [error, setError] = useState('');
     const [processing, setProcessing] = useState(false);
 
@@ -41,7 +85,7 @@ export default function RoleModal({
             return;
         }
 
-        setValues({ ...defaultRoleInitialValues, ...initialValues });
+        setValues(getInitialRoleValues(initialValues, permissions));
         setError('');
     }, [dialogOpen]);
 
@@ -67,23 +111,28 @@ export default function RoleModal({
     };
 
     const togglePermission = (permissionId, isVisibilityPermission = false) => {
-        const selectedPermission = permissions.find((permission) => permission.id === permissionId);
-        const nextSelectedPermissions = isVisibilityPermission
-            ? values.permissions.filter((item) => {
-                const permission = permissions.find((candidate) => candidate.id === item);
+        const nextPermissions = isVisibilityPermission
+            ? [
+                ...values.permissions.filter((item) => {
+                    const permission = permissions.find((candidate) => candidate.id === item);
 
-                return !permission || !visibilityPermissionPattern.test(permission.name);
-            })
-            : values.permissions;
-        const nextPermissions = values.permissions.includes(permissionId)
-            ? nextSelectedPermissions.filter((item) => item !== permissionId)
-            : [...nextSelectedPermissions, permissionId];
+                    return !permission || !isProposalVisibilityPermission(permission);
+                }),
+                permissionId,
+            ]
+            : values.permissions.includes(permissionId)
+              ? values.permissions.filter((item) => item !== permissionId)
+              : [...values.permissions, permissionId];
 
         setValues({ ...values, permissions: nextPermissions });
     };
 
-    const visibilityPermissions = permissions.filter((permission) => visibilityPermissionPattern.test(permission.name));
-    const actionPermissions = permissions.filter((permission) => !visibilityPermissionPattern.test(permission.name));
+    const visibilityPermissions = permissions.filter((permission) =>
+        Object.hasOwn(proposalVisibilityOptions, permission.name),
+    );
+    const actionPermissions = permissions.filter(
+        (permission) => !isProposalVisibilityPermission(permission),
+    );
 
     return (
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -119,15 +168,31 @@ export default function RoleModal({
                                     <div className="grid gap-2">
                                         <p className="text-xs font-semibold text-foreground">Proposal visibility</p>
                                         {visibilityPermissions.map((permission) => (
-                                            <label key={permission.id} className="flex items-center gap-2 text-sm">
+                                            <label
+                                                key={permission.id}
+                                                className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm transition-colors ${
+                                                    values.permissions.includes(permission.id)
+                                                        ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                                                        : 'border-border hover:border-primary/50 hover:bg-muted/50'
+                                                }`}
+                                            >
                                                 <input
                                                     type="radio"
                                                     name="proposal-visibility"
                                                     checked={values.permissions.includes(permission.id)}
                                                     onChange={() => togglePermission(permission.id, true)}
-                                                    className="h-4 w-4 border-input text-primary focus:ring-primary"
+                                                    disabled={processing}
+                                                    className="mt-0.5 size-4 shrink-0 cursor-pointer accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                                                 />
-                                                <span>{permission.name}</span>
+                                                <span className="grid flex-1 gap-0.5">
+                                                    <span className="font-medium text-foreground">{proposalVisibilityOptions[permission.name].label}</span>
+                                                    <span className="text-xs text-muted-foreground">
+                                                        {proposalVisibilityOptions[permission.name].description}
+                                                    </span>
+                                                </span>
+                                                {values.permissions.includes(permission.id) ? (
+                                                    <Check aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-primary" />
+                                                ) : null}
                                             </label>
                                         ))}
                                     </div>
@@ -160,8 +225,9 @@ export default function RoleModal({
                                 Cancel
                             </Button>
                         </DialogClose>
-                        <Button type="submit" disabled={processing}>
-                            {submitLabel}
+                        <Button type="submit" disabled={processing} aria-busy={processing}>
+                            {processing ? <Spinner /> : null}
+                            {processing ? 'Saving...' : submitLabel}
                         </Button>
                     </DialogFooter>
                 </form>

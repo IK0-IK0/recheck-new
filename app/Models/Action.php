@@ -21,7 +21,7 @@ use Illuminate\Support\Carbon;
  * @property int|null $deny_action_id
  * @property string $decision_mode
  * @property array<int, array{id: string, label: string, destination: string}>|null $custom_decision_branches
- * @property array<int, array{id: string, name: string, role_ids: array<int, int>, document_ids: array<int, int>}>|null $reviewer_groups
+ * @property array<int, array{id: string, name: string, role_ids: array<int, int>, document_ids: array<int, int>, decision_document_sets?: array<int, array{action_id: int, decision_id: string, role_ids?: array<int, int>, document_ids: array<int, int>}>}>|null $reviewer_groups
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  */

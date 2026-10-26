@@ -1,21 +1,42 @@
 import { router } from '@inertiajs/react';
 import {
     Activity,
-    Check,
     Eye,
     FileText,
+    History,
     Loader2,
     LoaderCircle,
+    MessageSquare,
+    Replace,
     Search,
-    X,
+    Upload,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import PhasePipeline from '@/components/PhasePipeline';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
+import {
+    Sheet,
+    SheetContent,
+    SheetDescription,
+    SheetHeader,
+    SheetTitle,
+} from '@/components/ui/sheet';
 
 type Phase = {
     id: number;
@@ -31,7 +52,14 @@ type Action = {
     action_type: 'submit' | 'review';
     decision_mode: 'approve_deny' | 'custom';
     custom_decision_branches?: { id: string; label: string; destination?: string }[] | null;
-    documents?: { id: number; name: string; file_type: string }[];
+    documents?: { id: number; name: string; file_type: string; label: 'form' | 'doc' }[];
+};
+
+type ReviewDocument = {
+    id: number;
+    name: string;
+    file_type: string;
+    label: 'form' | 'doc';
 };
 
 type Process = {
@@ -57,7 +85,9 @@ type Proposal = {
         action: Action;
         decision: string | null;
         created_at: string;
+        rejected_documents?: { document_id: number; comment: string | null }[] | null;
     }[];
+    review_documents?: ReviewDocument[];
     documents: {
         id: number;
         name: string;
@@ -68,7 +98,6 @@ type Proposal = {
             action_id: number | null;
         };
     }[];
-    isSample?: boolean;
 };
 
 const hasAssignedCurrentPhase = (proposal: Proposal): boolean => Boolean(
@@ -76,66 +105,82 @@ const hasAssignedCurrentPhase = (proposal: Proposal): boolean => Boolean(
     && proposal.process?.phases?.some((phase) => phase.id === proposal.current_phase?.id),
 );
 
-const hasSubmittedRequiredFiles = (proposal: Proposal): boolean => {
-    const requiredDocuments = proposal.current_action?.documents ?? [];
-
-    return requiredDocuments.every((requiredDocument) => proposal.documents.some((document) => (
-        document.pivot.required_document_id === requiredDocument.id
-        && document.pivot.action_id === proposal.current_action?.id
-        && document.pivot.phase_id === proposal.current_phase?.id
-    )));
-};
-
 type Props = {
     proposals: Proposal[];
+    currentStorageDriver: string;
 };
 
-type SampleDetailsState = 'waiting' | 'submitted';
 const ARCHIVED_PHASE = 'archived';
+const isRejectionOutcome = (decision: string, label?: string): boolean =>
+    decision === 'deny' || /\b(reject|deny|decline)\b/i.test(label ?? '');
 
-const sampleRequiredItems = [
-    { id: 'proposal', name: 'Research proposal document' },
-    { id: 'ethics', name: 'Ethics approval form' },
-    { id: 'supporting', name: 'Supporting materials' },
-];
+const readUploadResponse = async (response: Response): Promise<Record<string, unknown>> => {
+    const responseText = await response.text();
 
-const sampleSubmittedFiles = [
-    { id: 'proposal', name: 'community-health-proposal.pdf' },
-    { id: 'ethics', name: 'ethics-approval-form.pdf' },
-    { id: 'supporting', name: 'participant-information-sheet.pdf' },
-];
-
-const sampleProposal: Proposal = {
-    id: 0,
-    user_id: 0,
-    user_type: 'sample',
-    can_review: false,
-    title: 'Community Health Research Proposal',
-    process: {
-        id: 0,
-        name: 'Research Proposal Workflow',
-        phases: [{ id: 1, name: 'Initial Review', order: 1 }],
-    },
-    current_phase: { id: 1, name: 'Initial Review', order: 1 },
-    current_action: null,
-    completed_at: null,
-    created_at: '2026-10-15T08:00:00.000Z',
-    phase_transitions: [],
-    action_transitions: [],
-    documents: [],
-    isSample: true,
+    try {
+        return responseText ? JSON.parse(responseText) : {};
+    } catch {
+        throw new Error(`The server returned an unexpected response (HTTP ${response.status}).`);
+    }
 };
 
-export default function Tracking({ proposals }: Props) {
-    const [isSampleDetailsOpen, setIsSampleDetailsOpen] = useState(false);
+const uploadFileWithProgress = (
+    url: string,
+    file: File,
+    onProgress: (progress: number) => void,
+): Promise<void> =>
+    new Promise((resolve, reject) => {
+        const request = new XMLHttpRequest();
+
+        request.open('PUT', url);
+        request.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+        request.upload.addEventListener('progress', (event) => {
+            if (event.lengthComputable) {
+                onProgress(Math.round((event.loaded / event.total) * 100));
+            }
+        });
+        request.addEventListener('load', () => {
+            if (request.status >= 200 && request.status < 300) {
+                resolve();
+
+                return;
+            }
+
+            reject(new Error(`Bucket upload returned HTTP ${request.status}. Check the bucket CORS policy.`));
+        });
+        request.addEventListener('error', () =>
+            reject(new Error('The bucket upload failed. Check the bucket CORS policy.')),
+        );
+        request.addEventListener('abort', () => reject(new Error('The bucket upload was cancelled.')));
+        request.send(file);
+    });
+
+export default function Tracking({ proposals, currentStorageDriver }: Props) {
     const [selectedProposalId, setSelectedProposalId] = useState<number | null>(null);
     const [documentToView, setDocumentToView] =
         useState<Proposal['documents'][number] | null>(null);
     const [documentViewUrl, setDocumentViewUrl] = useState<string | null>(null);
     const [isLoadingDocumentView, setIsLoadingDocumentView] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+    const [uploadingReviewDocumentId, setUploadingReviewDocumentId] = useState<number | null>(null);
+    const [draggedReviewDocumentId, setDraggedReviewDocumentId] = useState<number | null>(null);
     const [isSubmittingDecision, setIsSubmittingDecision] = useState(false);
-    const [sampleDetailsState, setSampleDetailsState] = useState<SampleDetailsState>('waiting');
-    const [sampleFileSearch, setSampleFileSearch] = useState('');
+    const [selectedReviewDecision, setSelectedReviewDecision] = useState('');
+    const [filledReviewFormIds, setFilledReviewFormIds] = useState<number[]>([]);
+    const [rejectedDocumentIds, setRejectedDocumentIds] = useState<number[]>([]);
+    const [rejectedDocumentComments, setRejectedDocumentComments] = useState<
+        Record<number, string>
+    >({});
+    const [commentingDocumentIds, setCommentingDocumentIds] = useState<number[]>([]);
+    const [commentDropdownWidths, setCommentDropdownWidths] = useState<
+        Record<number, number>
+    >({});
+    const [commentDropdownOffsets, setCommentDropdownOffsets] = useState<
+        Record<number, number>
+    >({});
+    const fileRowRefs = useRef<Record<number, HTMLDivElement | null>>({});
+    const commentButtonRefs = useRef<Record<number, HTMLButtonElement | null>>({});
+    const reviewDocumentInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
     const [requestedPhaseOrder, setRequestedPhaseOrder] = useState<number | string | null>(null);
     const phases = useMemo(() => {
         const allPhaseOrders = new Set(
@@ -180,6 +225,94 @@ export default function Tracking({ proposals }: Props) {
     const selectedProposal = proposals.find(
         (proposal) => proposal.id === selectedProposalId,
     ) ?? null;
+    const selectedProposalHistory = useMemo(() => {
+        if (!selectedProposal) {
+            return [];
+        }
+
+        return [
+            {
+                id: `created-${selectedProposal.id}`,
+                label: 'Proposal created',
+                createdAt: selectedProposal.created_at,
+                isCreation: true,
+            },
+            ...selectedProposal.phase_transitions.map((transition) => ({
+                id: `phase-${transition.id}`,
+                label: `Moved to ${transition.phase.name}`,
+                createdAt: transition.created_at,
+                isCreation: false,
+            })),
+            ...selectedProposal.action_transitions.map((transition) => {
+                const decisionLabel = transition.action.custom_decision_branches
+                    ?.find((branch) => branch.id === transition.decision)
+                    ?.label;
+
+                return {
+                    id: `action-${transition.id}`,
+                    label: `Completed action · ${transition.action.name}${
+                        transition.decision
+                            ? ` · ${decisionLabel ?? transition.decision}`
+                            : ''
+                    }`,
+                    createdAt: transition.created_at,
+                    isCreation: false,
+                };
+            }),
+        ].sort(
+            (first, second) =>
+                new Date(second.createdAt).getTime() -
+                new Date(first.createdAt).getTime(),
+        );
+    }, [selectedProposal]);
+    const reviewDecisions =
+        selectedProposal?.current_action?.decision_mode === 'custom'
+            ? (selectedProposal.current_action.custom_decision_branches ?? []).map(
+                  (branch) => ({ value: branch.id, label: branch.label }),
+              )
+            : [
+                  { value: 'approve', label: 'Accept' },
+                  { value: 'deny', label: 'Reject' },
+              ];
+    const reviewDecision = reviewDecisions.some(
+        (decision) => decision.value === selectedReviewDecision,
+    )
+        ? selectedReviewDecision
+        : (reviewDecisions[0]?.value ?? '');
+    const isRejectingReview = isRejectionOutcome(
+        reviewDecision,
+        reviewDecisions.find((decision) => decision.value === reviewDecision)?.label,
+    );
+    const assignedReviewDocuments = selectedProposal?.can_review
+        ? selectedProposal.review_documents ?? []
+        : [];
+    const assignedReviewDocumentsComplete = assignedReviewDocuments.every(
+        (reviewDocument) => reviewDocument.label === 'form'
+            ? filledReviewFormIds.includes(reviewDocument.id)
+            : (selectedProposal?.documents ?? []).some(
+                  (file) =>
+                      file.pivot.action_id === selectedProposal?.current_action?.id
+                      && file.pivot.required_document_id === reviewDocument.id,
+              ),
+    );
+    const completedReviewDocumentCount = assignedReviewDocuments.filter(
+        (reviewDocument) => reviewDocument.label === 'form'
+            ? filledReviewFormIds.includes(reviewDocument.id)
+            : (selectedProposal?.documents ?? []).some(
+                  (file) =>
+                      file.pivot.action_id === selectedProposal?.current_action?.id
+                      && file.pivot.required_document_id === reviewDocument.id,
+              ),
+    ).length;
+    const assignedReviewDocumentIds = new Set(
+        assignedReviewDocuments.map((reviewDocument) => reviewDocument.id),
+    );
+    const submittedFiles = (selectedProposal?.documents ?? []).filter(
+        (file) =>
+            file.pivot.action_id !== selectedProposal?.current_action?.id
+            || file.pivot.required_document_id === null
+            || !assignedReviewDocumentIds.has(file.pivot.required_document_id),
+    );
     const phaseProposals = useMemo(() => {
         if (isArchivedSelected) {
             return archivedProposals;
@@ -198,56 +331,43 @@ export default function Tracking({ proposals }: Props) {
     const selectedPhaseName = isArchivedSelected
         ? 'Archived'
         : phases.find((phase) => phase.id === selectedPhaseOrder)?.name ?? 'No workflow phases';
-    const sampleDefaultPhase = sampleProposal.current_phase ?? { id: 1, name: 'Initial Review', order: 1 };
-    const sampleForSelectedPhase = useMemo<Proposal>(() => ({
-        ...sampleProposal,
-        current_phase: {
-            id: selectedPhaseOrder ?? sampleDefaultPhase.id,
-            name: selectedPhaseOrder === null ? sampleDefaultPhase.name : selectedPhaseName,
-            order: selectedPhaseOrder ?? sampleDefaultPhase.order,
-        },
-    }), [sampleDefaultPhase.id, sampleDefaultPhase.name, sampleDefaultPhase.order, selectedPhaseName, selectedPhaseOrder]);
-    const visibleSampleFiles = (sampleDetailsState === 'waiting' ? sampleRequiredItems : sampleSubmittedFiles)
-        .filter((item) => item.name.toLocaleLowerCase().includes(sampleFileSearch.trim().toLocaleLowerCase()));
     const filteredProposals = useMemo(() => {
         const normalizedSearch = search.trim().toLocaleLowerCase();
 
         if (!normalizedSearch) {
-            return isArchivedSelected
-                ? phaseProposals
-                : [...phaseProposals, sampleForSelectedPhase];
+            return phaseProposals;
         }
 
-        const matchingProposals = phaseProposals.filter((proposal) =>
+        return phaseProposals.filter((proposal) =>
             [proposal.title, proposal.process?.name ?? '', proposal.current_phase?.name ?? '']
                 .some((value) => value.toLocaleLowerCase().includes(normalizedSearch)),
         );
-
-        const sampleMatchesSearch = [
-            sampleForSelectedPhase.title,
-            sampleForSelectedPhase.process?.name ?? '',
-            sampleForSelectedPhase.current_phase?.name ?? '',
-        ].some((value) => value.toLocaleLowerCase().includes(normalizedSearch));
-
-        return !isArchivedSelected && sampleMatchesSearch
-            ? [...matchingProposals, sampleForSelectedPhase]
-            : matchingProposals;
-    }, [isArchivedSelected, phaseProposals, sampleForSelectedPhase, search]);
+    }, [phaseProposals, search]);
 
     const handleReviewDecision = (decision: string) => {
         if (!selectedProposal?.can_review || !selectedProposal.current_action) {
             return;
         }
 
+        const rejectedDocuments = isRejectingReview
+            ? selectedProposal.documents
+                  .filter((file) => rejectedDocumentIds.includes(file.id))
+                  .map((file) => ({
+                      document_id: file.id,
+                      comment: rejectedDocumentComments[file.id]?.trim() || null,
+                  }))
+            : [];
+
         router.post(
             `/tenant/proposals/${selectedProposal.id}/review`,
-            { decision },
+            { decision, rejected_documents: rejectedDocuments },
             {
                 preserveScroll: true,
                 onStart: () => setIsSubmittingDecision(true),
                 onFinish: () => setIsSubmittingDecision(false),
                 onSuccess: () => {
                     setSelectedProposalId(null);
+                    setFilledReviewFormIds([]);
                     toast.success('Review decision submitted.');
                     router.reload({ only: ['proposals'] });
                 },
@@ -257,6 +377,185 @@ export default function Tracking({ proposals }: Props) {
                     ),
             },
         );
+    };
+
+    const handleUploadReviewDocument = async (
+        reviewDocument: ReviewDocument,
+        files: File[],
+    ): Promise<boolean> => {
+        if (
+            !selectedProposal?.can_review
+            || !selectedProposal.current_action
+            || !selectedProposal.current_phase
+            || files.length === 0
+        ) {
+            return false;
+        }
+
+        const file = files[0];
+        const uploadedDocument = selectedProposal.documents.find(
+            (proposalDocument) =>
+                proposalDocument.pivot.action_id === selectedProposal.current_action?.id
+                && proposalDocument.pivot.required_document_id === reviewDocument.id,
+        );
+        const metadata = {
+            phase_id: selectedProposal.current_phase.id,
+            required_document_id: reviewDocument.id,
+            action_id: selectedProposal.current_action.id,
+            ...(uploadedDocument ? { replace_document_id: uploadedDocument.id } : {}),
+        };
+        setUploadingReviewDocumentId(reviewDocument.id);
+
+        if (currentStorageDriver !== 's3') {
+            const formData = new FormData();
+            formData.append('file', file);
+            Object.entries(metadata).forEach(([key, value]) => {
+                formData.append(key, String(value));
+            });
+
+            return new Promise((resolve) => {
+                router.post(
+                    `/tenant/proposals/${selectedProposal.id}/documents`,
+                    formData,
+                    {
+                        preserveScroll: true,
+                        onSuccess: () => {
+                            toast.success('Assigned file uploaded.');
+                            router.reload({ only: ['proposals'] });
+                            resolve(true);
+                        },
+                        onError: (errors) => {
+                            toast.error(
+                                errors.file
+                                    || errors.required_document_id
+                                    || errors.storage
+                                    || 'Assigned file upload failed.',
+                            );
+                            resolve(false);
+                        },
+                        onFinish: () => setUploadingReviewDocumentId(null),
+                    },
+                );
+            });
+        }
+
+        const csrfToken =
+            document
+                .querySelector('meta[name="csrf-token"]')
+                ?.getAttribute('content') || '';
+        setUploadProgress(0);
+
+        try {
+            const uploadUrlResponse = await fetch(
+                `/tenant/proposals/${selectedProposal.id}/documents/direct-upload-url`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Accept: 'application/json',
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': csrfToken,
+                    },
+                    body: JSON.stringify({
+                        ...metadata,
+                        file_name: file.name,
+                        file_size: file.size,
+                        content_type: file.type || 'application/octet-stream',
+                    }),
+                },
+            );
+            const uploadData = await readUploadResponse(uploadUrlResponse);
+
+            if (!uploadUrlResponse.ok) {
+                throw new Error(
+                    String(uploadData.error || JSON.stringify(uploadData.errors || uploadData)),
+                );
+            }
+
+            if (
+                typeof uploadData.url !== 'string'
+                || typeof uploadData.path !== 'string'
+                || typeof uploadData.reference !== 'string'
+            ) {
+                throw new Error('The server did not return a valid direct upload response.');
+            }
+
+            await uploadFileWithProgress(uploadData.url, file, setUploadProgress);
+
+            const completionResponse = await fetch(
+                `/tenant/proposals/${selectedProposal.id}/documents/complete-direct-upload`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Accept: 'application/json',
+                        'Content-Type': 'application/json',
+                        'X-CSRF-TOKEN': csrfToken,
+                    },
+                    body: JSON.stringify({
+                        ...metadata,
+                        path: uploadData.path,
+                        reference: uploadData.reference,
+                        file_size: file.size,
+                        content_type: file.type || 'application/octet-stream',
+                    }),
+                },
+            );
+            const completionData = await readUploadResponse(completionResponse);
+
+            if (!completionResponse.ok) {
+                throw new Error(
+                    String(completionData.error || JSON.stringify(completionData.errors || completionData)),
+                );
+            }
+
+            toast.success('Assigned file uploaded.');
+            router.reload({ only: ['proposals'] });
+
+            return true;
+        } catch (error) {
+            toast.error(
+                error instanceof Error ? error.message : 'Assigned file upload failed.',
+            );
+
+            return false;
+        } finally {
+            setUploadProgress(null);
+            setUploadingReviewDocumentId(null);
+        }
+    };
+
+    const handleSelectedReviewDocumentFiles = async (
+        reviewDocument: ReviewDocument,
+        files: FileList | File[],
+    ): Promise<void> => {
+        if (files.length === 0) {
+            return;
+        }
+
+        if (files.length !== 1) {
+            toast.error('Select or drop one file at a time.');
+
+            return;
+        }
+
+        const file = files[0];
+
+        if (file.size > 10 * 1024 * 1024) {
+            toast.error('The selected file exceeds the 10MB maximum size.');
+
+            return;
+        }
+
+        if (
+            reviewDocument.file_type.includes('/')
+            && file.type
+            && file.type.toLowerCase() !== reviewDocument.file_type.toLowerCase()
+        ) {
+            toast.error(`Choose a ${reviewDocument.file_type} file.`);
+
+            return;
+        }
+
+        await handleUploadReviewDocument(reviewDocument, [file]);
     };
 
     const handleViewDocument = async (
@@ -336,7 +635,7 @@ export default function Tracking({ proposals }: Props) {
                         <p className="mt-0.5 text-xs text-muted-foreground">
                             {isArchivedSelected
                                 ? `${phaseProposals.length} archived ${phaseProposals.length === 1 ? 'proposal' : 'proposals'}`
-                                : `${phaseProposals.length} ${phaseProposals.length === 1 ? 'proposal' : 'proposals'} in this phase · Sample preview included (not saved)`}
+                                : `${phaseProposals.length} ${phaseProposals.length === 1 ? 'proposal' : 'proposals'} in this phase`}
                         </p>
                     </div>
                     <div className="relative w-full">
@@ -364,12 +663,11 @@ export default function Tracking({ proposals }: Props) {
                             {filteredProposals.map((proposal) => (
                                 <tr key={proposal.id} className="transition-colors hover:bg-muted/40">
                                     <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-muted-foreground">
-                                        {proposal.isSample ? 'SAMPLE' : `#${proposal.id}`}
+                                        #{proposal.id}
                                     </td>
                                     <td className="max-w-96 px-4 py-3">
                                         <div className="flex min-w-0 items-center gap-2">
                                             <span className="truncate font-medium text-foreground">{proposal.title}</span>
-                                            {proposal.isSample ? <Badge variant="secondary">Sample</Badge> : null}
                                         </div>
                                         <p className="mt-1 truncate text-xs text-muted-foreground">
                                             {proposal.process?.name ?? 'No workflow process assigned'}
@@ -377,32 +675,17 @@ export default function Tracking({ proposals }: Props) {
                                         </p>
                                     </td>
                                     <td className="whitespace-nowrap px-4 py-3 text-right">
-                                        {proposal.isSample ? (
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                onClick={() => {
-                                                    setSampleDetailsState('waiting');
-                                                    setSampleFileSearch('');
-                                                    setIsSampleDetailsOpen(true);
-                                                }}
-                                            >
-                                                Details
-                                            </Button>
-                                        ) : (
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                onClick={() => setSelectedProposalId(proposal.id)}
-                                            >
-                                                {proposal.can_review
-                                                    && proposal.current_action?.action_type === 'review'
-                                                    && !proposal.completed_at
-                                                    && hasSubmittedRequiredFiles(proposal)
-                                                    ? 'Review'
-                                                    : 'Details'}
-                                            </Button>
-                                        )}
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => setSelectedProposalId(proposal.id)}
+                                        >
+                                            {proposal.can_review
+                                                && proposal.current_action?.action_type === 'review'
+                                                && !proposal.completed_at
+                                                ? 'Review'
+                                                : 'Details'}
+                                        </Button>
                                     </td>
                                 </tr>
                             ))}
@@ -422,25 +705,40 @@ export default function Tracking({ proposals }: Props) {
                 </div>
             </section>
 
-            <Dialog
+            <Sheet
                 open={selectedProposal !== null}
                 onOpenChange={(open) => {
                     if (!open) {
                         setSelectedProposalId(null);
+                        setSelectedReviewDecision('');
+                        setFilledReviewFormIds([]);
+                        setRejectedDocumentIds([]);
+                        setRejectedDocumentComments({});
+                        setCommentingDocumentIds([]);
                     }
                 }}
             >
-                <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+                <SheetContent
+                    side="right"
+                    className="h-dvh w-full overflow-hidden rounded-none p-4 sm:w-[min(72rem,calc(100vw-2rem))] sm:max-w-none sm:p-6"
+                >
                     {selectedProposal ? (
                         <>
-                            <DialogHeader>
-                                <DialogTitle>{selectedProposal.title}</DialogTitle>
-                                <DialogDescription>
+                            <SheetHeader className="p-0">
+                                <SheetTitle className="text-lg leading-none">
+                                    {selectedProposal.title}
+                                </SheetTitle>
+                                <SheetDescription>
                                     Proposal #{selectedProposal.id} details and current workflow status.
-                                </DialogDescription>
-                            </DialogHeader>
+                                </SheetDescription>
+                            </SheetHeader>
 
-                            <div className="space-y-5">
+                            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto pb-4">
+                                <div className="grid gap-4 md:grid-cols-2">
+                                    <section className="min-w-0 space-y-4">
+                                        <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                            Details
+                                        </h3>
                                 <div className="flex items-center justify-between gap-3 border-b border-border pb-3">
                                     <div>
                                         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -480,86 +778,456 @@ export default function Tracking({ proposals }: Props) {
                                     ) : null}
                                 </dl>
 
-                                <div>
-                                    <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                        Submitted files
-                                    </h3>
-                                    {selectedProposal.documents.length > 0 ? (
-                                        <ul className="max-h-48 space-y-2 overflow-y-auto">
-                                            {selectedProposal.documents.map((file) => (
-                                                <li
-                                                    key={file.id}
-                                                    className="flex min-w-0 items-center gap-3 rounded-md border border-border px-3 py-2"
-                                                >
-                                                    <FileText className="size-4 shrink-0 text-muted-foreground" />
-                                                    <span className="min-w-0 flex-1 truncate text-sm font-medium">{file.name}</span>
-                                                    <span className="shrink-0 text-xs text-muted-foreground">{file.file_type}</span>
-                                                    <Button
-                                                        type="button"
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        className="size-8 shrink-0"
-                                                        aria-label={`View ${file.name}`}
-                                                        title="View file"
-                                                        onClick={() => {
-                                                            void handleViewDocument(file);
-                                                        }}
+                                    </section>
+                                    <section className="min-w-0">
+                                        <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                            <History className="mr-1.5 inline size-4" />
+                                            History
+                                        </h3>
+                                        {selectedProposalHistory.length > 0 ? (
+                                            <ol className="custom-scrollbar max-h-40 space-y-2 overflow-y-auto pr-2">
+                                                {selectedProposalHistory.map((entry) => (
+                                                    <li
+                                                        key={entry.id}
+                                                        className={`flex h-12 flex-col justify-center overflow-hidden border-l-2 pl-3 ${entry.isCreation ? 'border-border' : 'border-primary/40'}`}
                                                     >
-                                                        <Eye className="size-4" />
-                                                    </Button>
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    ) : (
-                                        <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-                                            No files have been submitted.
-                                        </p>
-                                    )}
+                                                        <p className="truncate text-sm text-foreground">
+                                                            {entry.label}
+                                                        </p>
+                                                        <time className="truncate text-xs text-muted-foreground">
+                                                            {new Date(
+                                                                entry.createdAt,
+                                                            ).toLocaleString()}
+                                                        </time>
+                                                    </li>
+                                                ))}
+                                            </ol>
+                                        ) : (
+                                            <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+                                                No history is available.
+                                            </p>
+                                        )}
+                                    </section>
+
                                 </div>
+                                <div className="grid gap-4 border-t border-border pt-4 md:grid-cols-2">
+                                    <section className="min-w-0">
+                                        <div className="mb-2 min-h-10">
+                                            <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                                Submitted files
+                                            </h3>
+                                            <p aria-hidden="true" className="mt-1 text-xs leading-4 text-transparent">
+                                                -
+                                            </p>
+                                        </div>
+                                        {submittedFiles.length > 0 ? (
+                                            <ul className="max-h-36 space-y-2 overflow-y-auto">
+                                                {submittedFiles.map((file) => (
+                                                    <li key={file.id} className="relative">
+                                                        <div
+                                                            ref={(element) => {
+                                                                fileRowRefs.current[file.id] = element;
+                                                            }}
+                                                            className={`flex min-h-14 min-w-0 items-center gap-2 overflow-hidden rounded-md border px-2 py-1 ${rejectedDocumentIds.includes(file.id) ? 'border-destructive ring-1 ring-destructive' : 'border-border'}`}
+                                                        >
+                                                            <button
+                                                                type="button"
+                                                                className="flex min-w-0 flex-1 items-center gap-3 rounded-sm px-1 py-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                                                aria-label={
+                                                                    isRejectingReview
+                                                                        ? `${rejectedDocumentIds.includes(file.id) ? 'Unflag' : 'Flag'} ${file.name} as incorrect`
+                                                                        : file.name
+                                                                }
+                                                                aria-pressed={
+                                                                    isRejectingReview
+                                                                        ? rejectedDocumentIds.includes(file.id)
+                                                                        : undefined
+                                                                }
+                                                                disabled={!isRejectingReview || isSubmittingDecision}
+                                                                onClick={() => {
+                                                                    const isFlagged = rejectedDocumentIds.includes(file.id);
+
+                                                                    setRejectedDocumentIds((current) =>
+                                                                        isFlagged
+                                                                            ? current.filter((id) => id !== file.id)
+                                                                            : [...current, file.id],
+                                                                    );
+
+                                                                    if (isFlagged) {
+                                                                        setCommentingDocumentIds((current) =>
+                                                                            current.filter((id) => id !== file.id),
+                                                                        );
+                                                                        setRejectedDocumentComments((current) => {
+                                                                            const next = { ...current };
+                                                                            delete next[file.id];
+
+                                                                            return next;
+                                                                        });
+                                                                    }
+                                                                }}
+                                                            >
+                                                                <FileText className="size-4 shrink-0 text-muted-foreground" />
+                                                                <span className="flex min-w-0 flex-1 flex-col">
+                                                                    <span className="truncate text-sm font-medium">
+                                                                        {file.name}
+                                                                    </span>
+                                                                    <span className="truncate text-xs text-muted-foreground">
+                                                                        {file.file_type}
+                                                                    </span>
+                                                                </span>
+                                                            </button>
+                                                            {isRejectingReview && rejectedDocumentIds.includes(file.id) ? (
+                                                                <DropdownMenu
+                                                                    open={commentingDocumentIds.includes(file.id)}
+                                                                    onOpenChange={(open) => {
+                                                                        if (open) {
+                                                                            const row =
+                                                                                fileRowRefs.current[file.id];
+                                                                            const trigger =
+                                                                                commentButtonRefs.current[file.id];
+
+                                                                            if (row && trigger) {
+                                                                                setCommentDropdownWidths((current) => ({
+                                                                                    ...current,
+                                                                                    [file.id]: row.offsetWidth,
+                                                                                }));
+                                                                                setCommentDropdownOffsets((current) => ({
+                                                                                    ...current,
+                                                                                    [file.id]:
+                                                                                        row.getBoundingClientRect().left -
+                                                                                        trigger.getBoundingClientRect().left,
+                                                                                }));
+                                                                            }
+                                                                        }
+
+                                                                        setCommentingDocumentIds((current) =>
+                                                                            open
+                                                                                ? current.includes(file.id)
+                                                                                    ? current
+                                                                                    : [...current, file.id]
+                                                                                : current.filter((id) => id !== file.id),
+                                                                        );
+                                                                    }}
+                                                                >
+                                                                    <DropdownMenuTrigger asChild>
+                                                                        <Button
+                                                                            ref={(element) => {
+                                                                                commentButtonRefs.current[file.id] = element;
+                                                                            }}
+                                                                            type="button"
+                                                                            variant="ghost"
+                                                                            size="icon"
+                                                                            className={`relative size-8 shrink-0 ${
+                                                                                rejectedDocumentComments[file.id]?.trim()
+                                                                                    ? 'border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+                                                                                    : 'text-muted-foreground hover:bg-accent'
+                                                                            }`}
+                                                                            aria-label={`${commentingDocumentIds.includes(file.id) ? 'Hide' : 'Add'} comment for ${file.name}${rejectedDocumentComments[file.id]?.trim() ? ' (comment added)' : ''}`}
+                                                                            title={commentingDocumentIds.includes(file.id) ? 'Hide comment' : 'Add comment'}
+                                                                            disabled={isSubmittingDecision}
+                                                                        >
+                                                                            <MessageSquare className="size-4" />
+                                                                            {rejectedDocumentComments[file.id]?.trim() ? (
+                                                                                <span className="absolute right-1 top-1 block size-2 rounded-full bg-amber-500 ring-2 ring-background" />
+                                                                            ) : null}
+                                                                        </Button>
+                                                                    </DropdownMenuTrigger>
+                                                                    <DropdownMenuContent
+                                                                        side="top"
+                                                                        align="start"
+                                                                        alignOffset={commentDropdownOffsets[file.id] ?? 0}
+                                                                        sideOffset={8}
+                                                                        style={{
+                                                                            width:
+                                                                                commentDropdownWidths[file.id] ??
+                                                                                undefined,
+                                                                        }}
+                                                                        className="p-3"
+                                                                        onKeyDown={(event) => {
+                                                                            event.stopPropagation();
+                                                                        }}
+                                                                    >
+                                                                        <textarea
+                                                                            value={rejectedDocumentComments[file.id] ?? ''}
+                                                                            onChange={(event) => {
+                                                                                setRejectedDocumentComments((current) => ({
+                                                                                    ...current,
+                                                                                    [file.id]: event.target.value,
+                                                                                }));
+                                                                            }}
+                                                                            maxLength={2000}
+                                                                            rows={3}
+                                                                            placeholder={`Add a comment about ${file.name}`}
+                                                                            aria-label={`Comment about ${file.name}`}
+                                                                            className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                                                        />
+                                                                    </DropdownMenuContent>
+                                                                </DropdownMenu>
+                                                            ) : null}
+                                                            <Button
+                                                                type="button"
+                                                                variant="ghost"
+                                                                size="icon"
+                                                                className="size-8 shrink-0"
+                                                                aria-label={`View ${file.name}`}
+                                                                title="View file"
+                                                                onClick={() => {
+                                                                    void handleViewDocument(file);
+                                                                }}
+                                                            >
+                                                                <Eye className="size-4" />
+                                                            </Button>
+                                                        </div>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        ) : (
+                                            <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+                                                No submitted files.
+                                            </p>
+                                        )}
+                                    </section>
+
+                                {selectedProposal.can_review ? (
+                                    <section className="min-w-0">
+                                        <div className="mb-2 min-h-10">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                                    Assigned files
+                                                </h3>
+                                                <span className="text-xs tabular-nums text-muted-foreground">
+                                                    {completedReviewDocumentCount}/{assignedReviewDocuments.length}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        {assignedReviewDocuments.length > 0 ? (
+                                            <ul className="custom-scrollbar max-h-36 space-y-2 overflow-y-auto pr-1">
+                                                {assignedReviewDocuments.map((reviewDocument) => {
+                                                    const uploadedDocument =
+                                                        selectedProposal.documents.find(
+                                                            (file) =>
+                                                                file.pivot.action_id === selectedProposal.current_action?.id
+                                                                && file.pivot.required_document_id === reviewDocument.id,
+                                                        );
+                                                    const isUploading =
+                                                        uploadingReviewDocumentId === reviewDocument.id;
+                                                    const isDropTarget =
+                                                        reviewDocument.label === 'doc';
+
+                                                    return (
+                                                        <li
+                                                            key={reviewDocument.id}
+                                                            onDragOver={isDropTarget ? (event) => {
+                                                                event.preventDefault();
+                                                                setDraggedReviewDocumentId(reviewDocument.id);
+                                                            } : undefined}
+                                                            onDragLeave={isDropTarget ? (event) => {
+                                                                if (
+                                                                    !(event.relatedTarget instanceof Node)
+                                                                    || !event.currentTarget.contains(event.relatedTarget)
+                                                                ) {
+                                                                    setDraggedReviewDocumentId(null);
+                                                                }
+                                                            } : undefined}
+                                                            onDrop={isDropTarget ? (event) => {
+                                                                event.preventDefault();
+                                                                setDraggedReviewDocumentId(null);
+                                                                void handleSelectedReviewDocumentFiles(
+                                                                    reviewDocument,
+                                                                    event.dataTransfer.files,
+                                                                );
+                                                            } : undefined}
+                                                            className={`relative flex min-h-14 min-w-0 items-center justify-between gap-3 rounded-md border px-3 py-2 ${
+                                                                draggedReviewDocumentId === reviewDocument.id
+                                                                    ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                                                                    : uploadedDocument
+                                                                      ? 'border-primary bg-primary/5'
+                                                                      : 'border-border'
+                                                            }`}
+                                                        >
+                                                            {isDropTarget ? (
+                                                                <input
+                                                                    ref={(element) => {
+                                                                        reviewDocumentInputRefs.current[reviewDocument.id] = element;
+                                                                    }}
+                                                                    type="file"
+                                                                    className="sr-only"
+                                                                    accept={reviewDocument.file_type.includes('/')
+                                                                        ? reviewDocument.file_type
+                                                                        : undefined}
+                                                                    aria-label={`Choose file for ${reviewDocument.name}`}
+                                                                    disabled={isUploading || isSubmittingDecision}
+                                                                    onChange={(event) => {
+                                                                        const files = event.currentTarget.files;
+
+                                                                        event.currentTarget.value = '';
+
+                                                                        if (files) {
+                                                                            void handleSelectedReviewDocumentFiles(
+                                                                                reviewDocument,
+                                                                                files,
+                                                                            );
+                                                                        }
+                                                                    }}
+                                                                />
+                                                            ) : null}
+                                                            <div className="flex min-w-0 items-center gap-3">
+                                                                <FileText className="size-4 shrink-0 text-muted-foreground" />
+                                                                <div className="min-w-0">
+                                                                    <p className="truncate text-sm font-medium">
+                                                                        {reviewDocument.name}
+                                                                    </p>
+                                                                    <p className="truncate text-xs text-muted-foreground">
+                                                                        {reviewDocument.label === 'form'
+                                                                            ? filledReviewFormIds.includes(reviewDocument.id)
+                                                                                ? 'Form filled'
+                                                                                : 'Form'
+                                                                            : uploadedDocument
+                                                                              ? 'File uploaded'
+                                                                              : 'Document · not uploaded'}
+                                                                    </p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex shrink-0 items-center gap-1">
+                                                                {uploadedDocument ? (
+                                                                    <Button
+                                                                        type="button"
+                                                                        variant="ghost"
+                                                                        size="icon"
+                                                                        className="size-8"
+                                                                        aria-label={`View assigned file ${reviewDocument.name}`}
+                                                                        title="View file"
+                                                                        onClick={() => {
+                                                                            void handleViewDocument(uploadedDocument);
+                                                                        }}
+                                                                    >
+                                                                        <Eye className="size-4" />
+                                                                    </Button>
+                                                                ) : null}
+                                                                {reviewDocument.label === 'doc' ? (
+                                                                    <div className="flex items-center gap-2">
+                                                                        {isUploading ? (
+                                                                            <span className="text-xs text-muted-foreground">
+                                                                                {uploadProgress === null
+                                                                                    ? 'Uploading…'
+                                                                                    : `Uploading ${uploadProgress}%`}
+                                                                            </span>
+                                                                        ) : draggedReviewDocumentId === reviewDocument.id ? (
+                                                                            <span className="text-xs font-medium text-primary">
+                                                                                Drop file to upload
+                                                                            </span>
+                                                                        ) : null}
+                                                                        <Button
+                                                                            type="button"
+                                                                            variant="ghost"
+                                                                            size="icon"
+                                                                            className="relative z-10 size-8 shrink-0"
+                                                                            aria-label={`${uploadedDocument ? 'Replace' : 'Upload'} assigned file ${reviewDocument.name}`}
+                                                                            title={`${uploadedDocument ? 'Replace' : 'Upload'} file`}
+                                                                            disabled={isSubmittingDecision || isUploading}
+                                                                            onClick={() => {
+                                                                                reviewDocumentInputRefs.current[
+                                                                                    reviewDocument.id
+                                                                                ]?.click();
+                                                                            }}
+                                                                        >
+                                                                            {isUploading ? (
+                                                                                <Loader2 className="size-4 animate-spin" />
+                                                                            ) : uploadedDocument ? (
+                                                                                <Replace className="size-4" />
+                                                                            ) : (
+                                                                                <Upload className="size-4" />
+                                                                            )}
+                                                                        </Button>
+                                                                    </div>
+                                                                ) : (
+                                                                    <Button
+                                                                        type="button"
+                                                                        variant={filledReviewFormIds.includes(reviewDocument.id) ? 'secondary' : 'outline'}
+                                                                        size="sm"
+                                                                        disabled={isSubmittingDecision}
+                                                                        onClick={() => {
+                                                                            setFilledReviewFormIds((current) =>
+                                                                                current.includes(reviewDocument.id)
+                                                                                    ? current
+                                                                                    : [...current, reviewDocument.id],
+                                                                            );
+                                                                        }}
+                                                                    >
+                                                                        {filledReviewFormIds.includes(reviewDocument.id)
+                                                                            ? 'Filled'
+                                                                            : 'Fill'}
+                                                                    </Button>
+                                                                )}
+                                                            </div>
+                                                        </li>
+                                                    );
+                                                })}
+                                            </ul>
+                                        ) : (
+                                            <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+                                                No files are assigned to your reviewer group.
+                                            </p>
+                                        )}
+                                    </section>
+                                ) : null}
+                                </div>
+                            </div>
 
                                 {selectedProposal.can_review && selectedProposal.current_action?.action_type === 'review' ? (
-                                    <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4">
-                                        {selectedProposal.current_action.decision_mode === 'custom'
-                                            ? selectedProposal.current_action.custom_decision_branches?.map((branch) => (
-                                                <Button
-                                                    key={branch.id}
-                                                    type="button"
-                                                    disabled={isSubmittingDecision}
-                                                    onClick={() => handleReviewDecision(branch.id)}
-                                                >
-                                                    {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                                                    {branch.label}
-                                                </Button>
-                                            ))
-                                            : (
-                                                <>
-                                                    <Button
-                                                        type="button"
-                                                        variant="destructive"
-                                                        disabled={isSubmittingDecision}
-                                                        onClick={() => handleReviewDecision('deny')}
+                                    <div className="mt-auto flex shrink-0 flex-col gap-3 border-t border-border bg-background pt-4 sm:flex-row sm:items-end sm:justify-end">
+                                        <Select
+                                            value={reviewDecision}
+                                            onValueChange={(decision) => {
+                                                setSelectedReviewDecision(decision);
+                                                const label = reviewDecisions.find(
+                                                    (option) => option.value === decision,
+                                                )?.label;
+
+                                                if (!isRejectionOutcome(decision, label)) {
+                                                    setRejectedDocumentIds([]);
+                                                    setRejectedDocumentComments({});
+                                                    setCommentingDocumentIds([]);
+                                                }
+                                            }}
+                                            disabled={isSubmittingDecision || reviewDecisions.length === 0}
+                                        >
+                                            <SelectTrigger className="w-full sm:max-w-xs [&>svg]:rotate-180">
+                                                <SelectValue placeholder="Select a decision" />
+                                            </SelectTrigger>
+                                            <SelectContent side="top">
+                                                {reviewDecisions.map((decision) => (
+                                                    <SelectItem
+                                                        key={decision.value}
+                                                        value={decision.value}
                                                     >
-                                                        {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                                                        Reject
-                                                    </Button>
-                                                    <Button
-                                                        type="button"
-                                                        disabled={isSubmittingDecision}
-                                                        onClick={() => handleReviewDecision('approve')}
-                                                    >
-                                                        {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                                                        <Check className="mr-1.5 size-4" />
-                                                        Accept
-                                                    </Button>
-                                                </>
-                                            )}
+                                                        {decision.label}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                        <Button
+                                            type="button"
+                                            disabled={
+                                                isSubmittingDecision ||
+                                                reviewDecision === '' ||
+                                                !assignedReviewDocumentsComplete
+                                            }
+                                            onClick={() => {
+                                                handleReviewDecision(reviewDecision);
+                                            }}
+                                        >
+                                            {isSubmittingDecision ? (
+                                                <Loader2 className="mr-2 size-4 animate-spin" />
+                                            ) : null}
+                                            Confirm
+                                        </Button>
                                     </div>
                                 ) : null}
-                            </div>
                         </>
                     ) : null}
-                </DialogContent>
-            </Dialog>
+                </SheetContent>
+            </Sheet>
 
             <Dialog
                 open={documentToView !== null}
@@ -619,119 +1287,6 @@ export default function Tracking({ proposals }: Props) {
                 </DialogContent>
             </Dialog>
 
-            <Dialog open={isSampleDetailsOpen} onOpenChange={setIsSampleDetailsOpen}>
-                <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
-                    <DialogHeader>
-                        <DialogTitle>{sampleProposal.title}</DialogTitle>
-                        <DialogDescription>
-                            Sample preview only. Switch states to see how this module looks before and after submission.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="mt-2 grid grid-cols-2 gap-1 rounded-lg bg-muted p-1" role="tablist" aria-label="Sample module state">
-                        <button
-                            type="button"
-                            role="tab"
-                            aria-selected={sampleDetailsState === 'waiting'}
-                            onClick={() => setSampleDetailsState('waiting')}
-                            className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-                                sampleDetailsState === 'waiting' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-                            }`}
-                        >
-                            Waiting for researcher
-                        </button>
-                        <button
-                            type="button"
-                            role="tab"
-                            aria-selected={sampleDetailsState === 'submitted'}
-                            onClick={() => setSampleDetailsState('submitted')}
-                            className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${
-                                sampleDetailsState === 'submitted' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-                            }`}
-                        >
-                            Submitted for review
-                        </button>
-                    </div>
-
-                    <section role="tabpanel" className="mt-4 space-y-4">
-                        <div className="flex items-center justify-between gap-3 border-b border-border pb-3">
-                            <div>
-                                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Status</p>
-                                <p className="mt-1 text-sm text-foreground">
-                                    {sampleDetailsState === 'waiting' ? 'Awaiting required files' : 'Files ready for review'}
-                                </p>
-                            </div>
-                            <Badge variant={sampleDetailsState === 'waiting' ? 'outline' : 'secondary'}>
-                                {sampleDetailsState === 'waiting' ? 'Waiting for researcher' : 'Submitted'}
-                            </Badge>
-                        </div>
-
-                        <dl className="grid gap-3 text-sm sm:grid-cols-2">
-                            <div>
-                                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Workflow</dt>
-                                <dd className="mt-1">{sampleProposal.process?.name}</dd>
-                            </div>
-                            <div>
-                                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Current phase</dt>
-                                <dd className="mt-1">{sampleProposal.current_phase?.name}</dd>
-                            </div>
-                            <div>
-                                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Created</dt>
-                                <dd className="mt-1">{new Date(sampleProposal.created_at).toLocaleDateString()}</dd>
-                            </div>
-                        </dl>
-
-                        <div>
-                            <div className="mb-2 flex items-center justify-between gap-3">
-                                <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                    {sampleDetailsState === 'waiting' ? 'Items required' : 'Files submitted for review'}
-                                </h3>
-                            </div>
-                            <div className="relative mb-2">
-                                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                                <Input
-                                    value={sampleFileSearch}
-                                    onChange={(event) => setSampleFileSearch(event.target.value)}
-                                    placeholder="Search files"
-                                    aria-label="Search required and submitted files"
-                                    className="pl-9"
-                                />
-                            </div>
-                            <ul className="custom-scrollbar max-h-48 space-y-2 overflow-y-auto pr-2">
-                                {visibleSampleFiles.map((item) => (
-                                    <li key={item.id} className="flex h-12 min-w-0 items-center gap-3 rounded-md border border-border px-3">
-                                        <FileText className="size-4 shrink-0 text-muted-foreground" />
-                                        <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.name}</span>
-                                        {sampleDetailsState === 'waiting' ? (
-                                            <Badge variant="outline" className="shrink-0">Required</Badge>
-                                        ) : (
-                                            <Button type="button" variant="outline" size="sm" className="h-8 shrink-0">
-                                                <Eye className="mr-1.5 size-4" />
-                                                View file
-                                            </Button>
-                                        )}
-                                    </li>
-                                ))}
-                                {visibleSampleFiles.length === 0 ? (
-                                    <li className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-                                        No matching files.
-                                    </li>
-                                ) : null}
-                            </ul>
-                        </div>
-
-                        <div className="flex justify-end gap-2 border-t border-border pt-4">
-                            <Button type="button" variant="destructive" size="sm" disabled>
-                                <X className="mr-1.5 size-4" />
-                                Reject
-                            </Button>
-                            <Button type="button" size="sm" disabled className="bg-emerald-600 text-white hover:bg-emerald-700">
-                                <Check className="mr-1.5 size-4" />
-                                Accept
-                            </Button>
-                        </div>
-                    </section>
-                </DialogContent>
-            </Dialog>
         </div>
     );
 }

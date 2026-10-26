@@ -22,6 +22,20 @@ import {
 } from '@/components/ui/dialog';
 import FileDropZone from '@/components/FileDropZone';
 
+/**
+ * @param {{
+ *   title?: string,
+ *   description?: string,
+ *   trigger?: import('react').ReactNode,
+ *   submitLabel?: string,
+ *   initialValues?: { name: string, label: string },
+ *   showName?: boolean,
+ *   showType?: boolean,
+ *   expectedType?: string | null,
+ *   onSubmit?: (values: { name: string, label: string, files: File[] }) => boolean | void | Promise<boolean | void>,
+ *   uploadProgress?: number | null,
+ * }} props
+ */
 export default function DocumentUploadModal({
     title = 'Save document',
     description = 'Save a document record and choose its type.',

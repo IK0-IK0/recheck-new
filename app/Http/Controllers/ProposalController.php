@@ -8,6 +8,8 @@ use App\Models\Phase;
 use App\Models\Process;
 use App\Models\Proposal;
 use App\Models\StorageConfig;
+use App\Models\SuperadminTenantUser;
+use App\Models\User;
 use Aws\S3\S3Client;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\JsonResponse;
@@ -58,27 +60,53 @@ class ProposalController extends Controller
             $proposalsQuery->where('institution_id', $institutionId);
         }
 
-        $proposalsQuery
-            ->when(! $isTracking, fn ($query) => $query
+        if (! $this->userHasPermission($request, 'proposal.view.all')) {
+            $roleIds = $this->userRoleIds($request);
+            $assignedActionIds = $this->assignedReviewActionIds($roleIds);
+
+            $proposalsQuery->where(function ($query) use ($request, $assignedActionIds): void {
+                $query
                 ->where('user_id', $request->user()->getKey())
-                ->where('user_type', $request->user()::class))
-            ->with([
-                'process.phases' => fn ($query) => $query->orderBy('order')->orderBy('id'),
-                'process.phases.actions' => fn ($query) => $query->orderBy('order')->orderBy('id'),
-                'process.phases.actions.documents',
-                'currentPhase',
-                'currentAction.roles',
-                'currentAction.documents',
-                'phaseTransitions.phase',
-                'actionTransitions.action',
-                'documents',
-            ]);
+                ->where('user_type', $request->user()::class);
+
+                if ($assignedActionIds !== []) {
+                $query->orWhereIn('current_action_id', $assignedActionIds);
+                }
+            });
+        }
+
+        $proposalsQuery->with([
+            'process.phases' => fn ($query) => $query->orderBy('order')->orderBy('id'),
+            'process.phases.actions' => fn ($query) => $query->orderBy('order')->orderBy('id'),
+            'process.phases.actions.documents',
+            'currentPhase',
+            'currentAction.roles',
+            'currentAction.documents',
+            'phaseTransitions.phase',
+            'actionTransitions.action',
+            'documents',
+        ]);
         $proposals = $proposalsQuery->latest()->get();
         $proposals->each(function (Proposal $proposal) use ($request): void {
+            $currentAction = $proposal->currentAction;
+            $canReview = $currentAction?->action_type === 'review'
+                && $this->userCanReviewAction($request, $currentAction);
             $proposal->setAttribute(
                 'can_review',
-                $proposal->currentAction?->action_type === 'review'
-                    && $this->userCanReviewAction($request, $proposal->currentAction),
+                $canReview,
+            );
+
+            $reviewDocumentIds = $canReview && $currentAction
+                ? $this->reviewerAssignedDocumentIds($request, $currentAction)
+                : [];
+            $proposal->setAttribute(
+                'review_documents',
+                $reviewDocumentIds === []
+                    ? []
+                    : Document::query()
+                        ->whereIn('id', $reviewDocumentIds)
+                        ->orderBy('name')
+                        ->get(['id', 'name', 'file_type', 'label']),
             );
         });
         $requestedProposalId = filter_var($request->query('proposal'), FILTER_VALIDATE_INT);
@@ -93,6 +121,66 @@ class ProposalController extends Controller
                 ? $requestedProposalId
                 : null,
         ]);
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function userRoleIds(Request $request): array
+    {
+        $user = $request->user();
+        $pivotTable = $user instanceof SuperadminTenantUser ? 'role_tenant_user' : 'role_user';
+        $userIdColumn = $user instanceof SuperadminTenantUser ? 'tenant_user_id' : 'user_id';
+
+        return DB::connection('tenant')->table($pivotTable)
+            ->where($userIdColumn, $user->getKey())
+            ->pluck('role_id')
+            ->map(fn ($roleId): int => (int) $roleId)
+            ->all();
+    }
+
+    private function userHasPermission(Request $request, string $permissionName): bool
+    {
+        $user = $request->user();
+        $pivotTable = $user instanceof SuperadminTenantUser ? 'role_tenant_user' : 'role_user';
+        $userIdColumn = $user instanceof SuperadminTenantUser ? 'tenant_user_id' : 'user_id';
+
+        return DB::connection('tenant')->table($pivotTable)
+            ->join('permission_role', 'permission_role.role_id', '=', $pivotTable.'.role_id')
+            ->join('permissions', 'permissions.id', '=', 'permission_role.permission_id')
+            ->where($pivotTable.'.'.$userIdColumn, $user->getKey())
+            ->where('permissions.name', $permissionName)
+            ->exists();
+    }
+
+    /**
+     * @param  list<int>  $roleIds
+     * @return list<int>
+     */
+    private function assignedReviewActionIds(array $roleIds): array
+    {
+        if ($roleIds === []) {
+            return [];
+        }
+
+        $actionIds = DB::connection('tenant')->table('action_role')
+            ->whereIn('role_id', $roleIds)
+            ->pluck('action_id')
+            ->map(fn ($actionId): int => (int) $actionId)
+            ->all();
+        $reviewerGroupActionIds = Action::query()
+            ->where('action_type', 'review')
+            ->get(['id', 'reviewer_groups'])
+            ->filter(fn (Action $action): bool => collect($action->reviewer_groups ?? [])
+                ->contains(fn (array $group): bool => array_intersect(
+                    array_map('intval', $group['role_ids'] ?? []),
+                    $roleIds,
+                ) !== []))
+            ->pluck('id')
+            ->map(fn ($actionId): int => (int) $actionId)
+            ->all();
+
+        return array_values(array_unique([...$actionIds, ...$reviewerGroupActionIds]));
     }
 
     /**
@@ -113,6 +201,7 @@ class ProposalController extends Controller
                         ->where('institution_id', $institutionId)
                         ->where('user_id', $request->user()->getKey())
                         ->where('user_type', $request->user()::class)
+                        ->whereNull('completed_at')
                         ->count();
 
                     if ($proposalCount >= 3) {
@@ -192,8 +281,6 @@ class ProposalController extends Controller
      */
     public function storeDocument(Request $request, Proposal $proposal): RedirectResponse
     {
-        $this->authorizeProposalOwner($request, $proposal);
-
         $validated = $request->validate([
             'file' => ['required', 'file', 'max:10240'], // 10MB max
             'name' => ['required_without:required_document_id', 'string', 'max:255'],
@@ -203,6 +290,13 @@ class ProposalController extends Controller
             'action_id' => ['nullable', 'integer'],
             'replace_document_id' => ['nullable', 'integer'],
         ]);
+
+        $this->authorizeProposalDocumentUpload(
+            $request,
+            $proposal,
+            isset($validated['action_id']) ? (int) $validated['action_id'] : null,
+            isset($validated['required_document_id']) ? (int) $validated['required_document_id'] : null,
+        );
 
         $uploadedFile = $request->file('file');
         $name = $validated['name'] ?? null;
@@ -363,8 +457,6 @@ class ProposalController extends Controller
 
     public function directUploadUrl(Request $request, Proposal $proposal): JsonResponse
     {
-        $this->authorizeProposalOwner($request, $proposal);
-
         $validated = $request->validate([
             'file_name' => ['required', 'string', 'max:255'],
             'content_type' => ['required', 'string', 'max:255'],
@@ -374,6 +466,13 @@ class ProposalController extends Controller
             'action_id' => ['nullable', 'integer'],
             'replace_document_id' => ['nullable', 'integer'],
         ]);
+
+        $this->authorizeProposalDocumentUpload(
+            $request,
+            $proposal,
+            isset($validated['action_id']) ? (int) $validated['action_id'] : null,
+            (int) $validated['required_document_id'],
+        );
 
         $this->validateRequiredDocumentUpload(
             $proposal,
@@ -444,8 +543,6 @@ class ProposalController extends Controller
 
     public function completeDirectUpload(Request $request, Proposal $proposal): JsonResponse
     {
-        $this->authorizeProposalOwner($request, $proposal);
-
         $validated = $request->validate([
             'content_type' => ['required', 'string', 'max:255'],
             'file_size' => ['required', 'integer', 'min:1', 'max:10485760'],
@@ -456,6 +553,13 @@ class ProposalController extends Controller
             'action_id' => ['nullable', 'integer'],
             'replace_document_id' => ['nullable', 'integer'],
         ]);
+
+        $this->authorizeProposalDocumentUpload(
+            $request,
+            $proposal,
+            isset($validated['action_id']) ? (int) $validated['action_id'] : null,
+            (int) $validated['required_document_id'],
+        );
 
         $this->validateRequiredDocumentUpload(
             $proposal,
@@ -629,9 +733,94 @@ class ProposalController extends Controller
                     'action_id' => 'The selected document is not required by the current workflow action.',
                 ]);
             }
+
+            $currentAction = Action::query()
+                ->with('documents')
+                ->findOrFail($actionId);
+
+            if (! in_array(
+                $requiredDocumentId,
+                $this->requiredDocumentIdsForAction($proposal, $currentAction),
+                true,
+            )) {
+                throw ValidationException::withMessages([
+                    'required_document_id' => "The selected document is not required for the proposal's recorded outcomes.",
+                ]);
+            }
+        }
+
+        if (
+            $actionId === null
+            && (int) $proposal->current_phase_id === (int) $phase->id
+            && $proposal->current_action_id !== null
+        ) {
+            $currentAction = Action::query()
+                ->with('documents')
+                ->find($proposal->current_action_id);
+            $hasOutcomeSpecificRequirements = collect($currentAction?->reviewer_groups ?? [])
+                ->contains(fn (array $group): bool => ! empty($group['decision_document_sets']));
+
+            if (
+                $currentAction
+                && $hasOutcomeSpecificRequirements
+                && ! in_array(
+                    $requiredDocumentId,
+                    $this->requiredDocumentIdsForAction($proposal, $currentAction),
+                    true,
+                )
+            ) {
+                throw ValidationException::withMessages([
+                    'required_document_id' => "The selected document is not required for the proposal's recorded outcomes.",
+                ]);
+            }
         }
 
         return ['phase' => $phase, 'document' => $requiredDocument];
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function requiredDocumentIdsForAction(Proposal $proposal, Action $action): array
+    {
+        $reviewerGroups = collect($action->reviewer_groups ?? []);
+        $decisionDocumentSets = $reviewerGroups
+            ->flatMap(fn (array $group): array => $group['decision_document_sets'] ?? []);
+
+        if ($decisionDocumentSets->isEmpty()) {
+            return $action->documents
+                ->pluck('id')
+                ->map(fn ($id): int => (int) $id)
+                ->all();
+        }
+
+        $documentIds = $reviewerGroups
+            ->flatMap(fn (array $group): array => $group['document_ids'] ?? [])
+            ->map(fn ($id): int => (int) $id)
+            ->all();
+        $mostRecentDecision = $proposal->actionTransitions()
+            ->whereNotNull('decision')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->first(['action_id', 'decision']);
+
+        foreach ($decisionDocumentSets as $set) {
+            $sourceActionId = (int) ($set['action_id'] ?? 0);
+
+            if (
+                $mostRecentDecision
+                && $sourceActionId !== 0
+                && (int) $mostRecentDecision->action_id === $sourceActionId
+                && (string) $mostRecentDecision->decision === (string) ($set['decision_id'] ?? '')
+            ) {
+                $documentIds = [
+                    ...$documentIds,
+                    ...array_map('intval', $set['document_ids'] ?? []),
+                ];
+            }
+        }
+
+        return array_values(array_unique($documentIds));
     }
 
     private function findProposalDocumentForReplacement(
@@ -737,22 +926,42 @@ class ProposalController extends Controller
         );
         $validated = $request->validate([
             'decision' => ['required', 'string', 'max:255'],
+            'rejected_documents' => ['sometimes', 'array'],
+            'rejected_documents.*.document_id' => ['required', 'integer', 'distinct'],
+            'rejected_documents.*.comment' => ['nullable', 'string', 'max:2000'],
         ]);
         $action = Action::query()->find($proposal->current_action_id);
 
         abort_unless($action && $action->action_type === 'review', 409);
         abort_unless($this->userCanReviewAction($request, $action), 403);
 
-        return $this->completeCurrentAction($request, $proposal, $validated['decision'], true);
+        $rejectedDocuments = $validated['rejected_documents'] ?? [];
+        if ($rejectedDocuments !== [] && ! $this->isRejectionDecision($action, $validated['decision'])) {
+            throw ValidationException::withMessages([
+                'rejected_documents' => 'Files can only be flagged for a rejection decision.',
+            ]);
+        }
+
+        return $this->completeCurrentAction(
+            $request,
+            $proposal,
+            $validated['decision'],
+            true,
+            $rejectedDocuments,
+        );
     }
 
+    /**
+     * @param  array<int, array{document_id: int, comment?: string|null}>  $rejectedDocuments
+     */
     private function completeCurrentAction(
         Request $request,
         Proposal $proposal,
         ?string $decision,
         bool $returnToTracking = false,
+        array $rejectedDocuments = [],
     ): RedirectResponse {
-        $result = DB::connection('tenant')->transaction(function () use ($request, $proposal, $decision): array {
+        $result = DB::connection('tenant')->transaction(function () use ($request, $proposal, $decision, $rejectedDocuments): array {
             $lockedProposal = Proposal::query()
                 ->whereKey($proposal->id)
                 ->lockForUpdate()
@@ -789,8 +998,13 @@ class ProposalController extends Controller
                     ->pluck('required_document_id')
                     ->map(fn ($id): int => (int) $id)
                     ->all();
+                $requiredDocumentIds = $this->requiredDocumentIdsForAction(
+                    $lockedProposal,
+                    $action,
+                );
                 $missingDocument = $action->documents->first(
-                    fn (Document $document): bool => ! in_array((int) $document->id, $uploadedRequiredDocumentIds, true),
+                    fn (Document $document): bool => in_array((int) $document->id, $requiredDocumentIds, true)
+                        && ! in_array((int) $document->id, $uploadedRequiredDocumentIds, true),
                 );
 
                 if ($missingDocument) {
@@ -800,6 +1014,23 @@ class ProposalController extends Controller
 
             if ($action->action_type === 'review' && ! $this->isValidReviewDecision($action, $decision)) {
                 return ['error' => 'Choose a valid outcome for this review action.'];
+            }
+
+            if ($rejectedDocuments !== []) {
+                if ($action->action_type !== 'review' || ! $this->isRejectionDecision($action, $decision)) {
+                    return ['error' => 'Files can only be flagged for a rejection decision.'];
+                }
+
+                $proposalDocumentIds = $lockedProposal->documents()
+                    ->pluck('documents.id')
+                    ->map(fn ($id): int => (int) $id)
+                    ->all();
+
+                foreach ($rejectedDocuments as $rejectedDocument) {
+                    if (! in_array((int) $rejectedDocument['document_id'], $proposalDocumentIds, true)) {
+                        return ['error' => 'A flagged file does not belong to this proposal.'];
+                    }
+                }
             }
 
             if (
@@ -827,12 +1058,16 @@ class ProposalController extends Controller
                 }
             }
 
-            $lockedProposal->actionTransitions()->create([
+            $transition = [
                 'action_id' => $action->id,
                 'decision' => $decision,
                 'user_id' => $request->user()->getKey(),
                 'user_type' => $request->user()::class,
-            ]);
+            ];
+            if ($rejectedDocuments !== []) {
+                $transition['rejected_documents'] = $rejectedDocuments;
+            }
+            $lockedProposal->actionTransitions()->create($transition);
 
             $destination = $this->resolveActionDestination($action, $decision, $lockedProposal->process_id);
 
@@ -978,8 +1213,31 @@ class ProposalController extends Controller
         return in_array($decision, ['approve', 'deny'], true);
     }
 
+    private function isRejectionDecision(Action $action, string $decision): bool
+    {
+        if ($action->decision_mode !== 'custom') {
+            return $decision === 'deny';
+        }
+
+        $branch = collect($action->custom_decision_branches ?? [])
+            ->first(fn (array $item): bool => (string) ($item['id'] ?? '') === $decision);
+
+        return isset($branch['label'])
+            && preg_match('/\b(reject|deny|decline)\b/i', $branch['label']) === 1;
+    }
+
     private function userCanReviewAction(Request $request, Action $action): bool
     {
+        $user = $request->user();
+
+        if (
+            $user instanceof User
+            && ! ($user instanceof SuperadminTenantUser)
+            && $user->role === 'institution'
+        ) {
+            return true;
+        }
+
         $roleIds = array_values(array_unique([
             ...$action->roles()->pluck('roles.id')->map(fn ($id): int => (int) $id)->all(),
             ...collect($action->reviewer_groups ?? [])
@@ -992,10 +1250,114 @@ class ProposalController extends Controller
             return true;
         }
 
-        return DB::connection('tenant')->table('role_user')
-            ->where('user_id', $request->user()->getKey())
-            ->whereIn('role_id', $roleIds)
-            ->exists();
+        return array_intersect($this->userRoleIds($request), $roleIds) !== [];
+    }
+
+    /**
+     * Get the documents assigned to the groups available to this reviewer.
+     *
+     * @return list<int>
+     */
+    private function reviewerAssignedDocumentIds(Request $request, Action $action): array
+    {
+        $reviewerGroups = collect($action->reviewer_groups ?? []);
+
+        if ($reviewerGroups->isEmpty()) {
+            return $action->documents()
+                ->pluck('documents.id')
+                ->map(fn ($id): int => (int) $id)
+                ->all();
+        }
+
+        $allGroupDocumentIds = $reviewerGroups
+            ->flatMap(fn (array $group): array => $group['document_ids'] ?? [])
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->values();
+
+        $user = $request->user();
+        $isInstitutionReviewer = $user instanceof User
+            && ! ($user instanceof SuperadminTenantUser)
+            && $user->role === 'institution';
+
+        if ($isInstitutionReviewer) {
+            return $reviewerGroups
+                ->flatMap(fn (array $group): array => $group['document_ids'] ?? [])
+                ->map(fn ($id): int => (int) $id)
+                ->unique()
+                ->values()
+                ->all();
+        }
+
+        $userRoleIds = DB::connection('tenant')->table('role_user')
+            ->where('user_id', $user->getKey())
+            ->pluck('role_id')
+            ->map(fn ($id): int => (int) $id)
+            ->all();
+        $assignedDocumentIds = $reviewerGroups
+            ->filter(fn (array $group): bool => ($group['role_ids'] ?? []) === []
+                || array_intersect(
+                    $userRoleIds,
+                    array_map('intval', $group['role_ids'] ?? []),
+                ) !== [])
+            ->flatMap(fn (array $group): array => $group['document_ids'] ?? [])
+            ->map(fn ($id): int => (int) $id)
+            ->all();
+        $actionRoleIds = $action->roles()
+            ->pluck('roles.id')
+            ->map(fn ($id): int => (int) $id)
+            ->all();
+        $hasActionRoleAccess = $actionRoleIds === []
+            || array_intersect($userRoleIds, $actionRoleIds) !== [];
+
+        if ($hasActionRoleAccess) {
+            $directDocumentIds = $action->documents()
+                ->pluck('documents.id')
+                ->map(fn ($id): int => (int) $id)
+                ->diff($allGroupDocumentIds)
+                ->all();
+            $assignedDocumentIds = [...$assignedDocumentIds, ...$directDocumentIds];
+        }
+
+        return array_values(array_unique($assignedDocumentIds));
+    }
+
+    private function authorizeProposalDocumentUpload(
+        Request $request,
+        Proposal $proposal,
+        ?int $actionId,
+        ?int $requiredDocumentId,
+    ): void {
+        if (
+            (int) $request->user()->getKey() === (int) $proposal->user_id
+            && $request->user()::class === $proposal->user_type
+            && $request->user()->getInstitutionId() !== null
+            && (int) $request->user()->getInstitutionId() === (int) $proposal->institution_id
+        ) {
+            return;
+        }
+
+        abort_unless(
+            $request->user()->getInstitutionId() !== null
+                && (int) $request->user()->getInstitutionId() === (int) $proposal->institution_id
+                && $actionId !== null
+                && $requiredDocumentId !== null
+                && (int) $proposal->current_action_id === $actionId,
+            403,
+        );
+
+        $action = Action::query()->findOrFail($actionId);
+
+        abort_unless(
+            $action->action_type === 'review'
+                && $this->userCanReviewAction($request, $action)
+                && in_array(
+                    $requiredDocumentId,
+                    $this->reviewerAssignedDocumentIds($request, $action),
+                    true,
+                ),
+            403,
+        );
     }
 
     private function authorizeProposalOwner(Request $request, Proposal $proposal): void

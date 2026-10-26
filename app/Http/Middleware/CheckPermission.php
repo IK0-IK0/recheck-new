@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\SuperadminTenantUser;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -19,13 +20,12 @@ class CheckPermission
      */
     public function handle(Request $request, Closure $next, string ...$permissions): Response
     {
-        $userPermissions = Auth::user()
-            ?->roles()
-            ->with('permissions')
-            ->get()
-            ->pluck('permissions.*.name')
-            ->flatten()
-            ?? collect();
+        $user = Auth::user();
+        $userPermissions = $user instanceof SuperadminTenantUser
+            ? $user->tenantRoles()->pluck('permissions.*.name')->flatten()
+            : ($user
+                ? $user->roles()->with('permissions')->get()->pluck('permissions.*.name')->flatten()
+                : collect());
 
         foreach ($permissions as $permission) {
             if ($userPermissions->contains($permission)) {

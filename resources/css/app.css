@@ -144,12 +144,27 @@
 
 @layer components {
     .phase-pipeline-fade {
-        -webkit-mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 10rem), transparent 100%);
-        mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 10rem), transparent 100%);
+        -webkit-mask-image: linear-gradient(
+            to right,
+            #000 0%,
+            #000 calc(100% - 10rem),
+            transparent 100%
+        );
+        mask-image: linear-gradient(
+            to right,
+            #000 0%,
+            #000 calc(100% - 10rem),
+            transparent 100%
+        );
     }
 
     .custom-scrollbar {
-        scrollbar-color: color-mix(in oklch, var(--muted-foreground) 55%, transparent) transparent;
+        scrollbar-color: color-mix(
+                in oklch,
+                var(--muted-foreground) 55%,
+                transparent
+            )
+            transparent;
         scrollbar-width: thin;
     }
 
@@ -477,6 +492,24 @@ html.theme-teal #nprogress .peg {
 html.theme-teal #nprogress .spinner-icon {
     border-top-color: #0d9488 !important;
     border-left-color: #0d9488 !important;
+}
+
+.preview-progress-bar {
+    animation: preview-progress 1.4s ease-in-out infinite;
+}
+
+@keyframes preview-progress {
+    0% {
+        transform: translateX(-110%);
+    }
+
+    50% {
+        transform: translateX(100%);
+    }
+
+    100% {
+        transform: translateX(310%);
+    }
 }
 
 /* Page transition animations using View Transitions API */

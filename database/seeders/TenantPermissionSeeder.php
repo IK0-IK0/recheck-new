@@ -14,8 +14,7 @@ class TenantPermissionSeeder extends Seeder
     {
         $permissions = [
             'proposal.view.all',
-            'proposal.view.assigned',
-            'proposal.view.own',
+            'proposal.view.own_or_assigned',
             'proposal.submit',
             'proposal.request_changes',
             'file.upload',

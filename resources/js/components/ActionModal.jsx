@@ -61,9 +61,85 @@ const createReviewerGroup = (number = 1) => ({
     name: `Assignment ${number}`,
     roleIds: [],
     documentIds: [],
+    decisionDocumentSets: [],
 });
 
 function normalizeActionValues(actionValues = {}) {
+    const reviewerGroups = actionValues.reviewer_groups?.length
+        ? actionValues.reviewer_groups.map((group) => ({
+              ...group,
+              roleIds: group.roleIds ?? group.role_ids ?? [],
+              documentIds: group.documentIds ?? group.document_ids ?? [],
+              decisionDocumentSets: (
+                  group.decisionDocumentSets ??
+                  group.decision_document_sets ??
+                  []
+              ).map((set) => ({
+                  actionId: set.actionId ?? set.action_id,
+                  decisionId: set.decisionId ?? set.decision_id,
+                  documentIds: set.documentIds ?? set.document_ids ?? [],
+                  roleIds: set.roleIds ?? set.role_ids ?? [],
+              })),
+          }))
+        : [
+              {
+                  ...createReviewerGroup(),
+                  roleIds: actionValues.roles ?? [],
+                  documentIds: actionValues.document_ids ?? [],
+              },
+          ];
+    const mergedDecisionDocumentSets = new Map();
+
+    reviewerGroups
+        .flatMap((group) => group.decisionDocumentSets)
+        .forEach((set) => {
+            const key = `${set.actionId}:${set.decisionId}`;
+            const existingSet = mergedDecisionDocumentSets.get(key);
+
+            mergedDecisionDocumentSets.set(
+                key,
+                existingSet
+                    ? {
+                          ...existingSet,
+                          roleIds: [
+                              ...new Set([
+                                  ...existingSet.roleIds,
+                                  ...set.roleIds,
+                              ]),
+                          ],
+                          documentIds: [
+                              ...new Set([
+                                  ...existingSet.documentIds,
+                                  ...set.documentIds,
+                              ]),
+                          ],
+                      }
+                    : set,
+            );
+        });
+    const normalizedReviewerGroups =
+        actionValues.action_type === 'submit'
+            ? [
+                  {
+                      ...reviewerGroups[0],
+                      roleIds: [
+                          ...new Set(
+                              reviewerGroups.flatMap((group) => group.roleIds),
+                          ),
+                      ],
+                      documentIds: [
+                          ...new Set(
+                              reviewerGroups.flatMap(
+                                  (group) => group.documentIds,
+                              ),
+                          ),
+                      ],
+                      decisionDocumentSets: [
+                          ...mergedDecisionDocumentSets.values(),
+                      ],
+                  },
+              ]
+            : reviewerGroups;
     const standardBranches = [
         {
             ...createDecisionBranch('approve', 1),
@@ -84,19 +160,7 @@ function normalizeActionValues(actionValues = {}) {
         ...actionValues,
         roles: actionValues.roles ?? [],
         document_ids: actionValues.document_ids ?? [],
-        reviewer_groups: actionValues.reviewer_groups?.length
-            ? actionValues.reviewer_groups.map((group) => ({
-                  ...group,
-                  roleIds: group.roleIds ?? group.role_ids ?? [],
-                  documentIds: group.documentIds ?? group.document_ids ?? [],
-              }))
-            : [
-                  {
-                      ...createReviewerGroup(),
-                      roleIds: actionValues.roles ?? [],
-                      documentIds: actionValues.document_ids ?? [],
-                  },
-              ],
+        reviewer_groups: normalizedReviewerGroups,
         decision_mode: actionValues.decision_mode ?? 'approve_deny',
         custom_decision_branches: actionValues.custom_decision_branches ?? [],
         decision_branches: [
@@ -239,7 +303,7 @@ function SearchableMultiSelect({
                                   className="h-9 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
                               />
                           </div>
-                          <div className="custom-scrollbar h-24 overflow-y-scroll py-1 pr-2">
+                          <div className="custom-scrollbar max-h-40 overflow-y-auto py-1 pr-2">
                               {filteredItems.length ? (
                                   filteredItems.map((item) => {
                                       const selected = selectedIds.includes(
@@ -300,6 +364,7 @@ export default function ActionModal({
     roles = [],
     documents = [],
     actions = [],
+    decisionSources = [],
     actionId = null,
     onSubmit,
 }) {
@@ -309,9 +374,81 @@ export default function ActionModal({
     );
     const [errors, setErrors] = useState({ name: '' });
     const [processing, setProcessing] = useState(false);
+    const [activeDocumentSet, setActiveDocumentSet] = useState('all');
 
     const dialogOpen = open === undefined ? internalOpen : open;
     const setDialogOpen = onOpenChange ?? setInternalOpen;
+
+    const buildSubmissionGroups = (reviewerGroups) => {
+        const [firstGroup] = reviewerGroups;
+
+        if (!firstGroup) {
+            return [];
+        }
+
+        const existingSets = new Map();
+
+        reviewerGroups
+            .flatMap((group) => group.decisionDocumentSets)
+            .forEach((set) => {
+                const key = `${set.actionId}:${set.decisionId}`;
+                const existingSet = existingSets.get(key);
+
+                existingSets.set(
+                    key,
+                    existingSet
+                        ? {
+                              ...existingSet,
+                              documentIds: [
+                                  ...new Set([
+                                      ...existingSet.documentIds,
+                                      ...set.documentIds,
+                                  ]),
+                              ],
+                          }
+                        : set,
+                );
+            });
+
+        return [
+            {
+                ...firstGroup,
+                roleIds: [
+                    ...new Set(
+                        reviewerGroups.flatMap((group) => group.roleIds),
+                    ),
+                ],
+                documentIds: [
+                    ...new Set(
+                        reviewerGroups.flatMap((group) => group.documentIds),
+                    ),
+                ],
+                decisionDocumentSets: decisionSources.flatMap((source) =>
+                    source.outcomes.map(
+                        (outcome) =>
+                            existingSets.get(`${source.id}:${outcome.id}`) ?? {
+                                actionId: source.id,
+                                decisionId: outcome.id,
+                                documentIds: [],
+                                roleIds: [],
+                            },
+                    ),
+                ),
+            },
+        ];
+    };
+    const reviewerGroupsForAction =
+        values.action_type === 'submit'
+            ? buildSubmissionGroups(values.reviewer_groups)
+            : values.reviewer_groups;
+    const activeDocumentSetExists =
+        activeDocumentSet === 'all' ||
+        reviewerGroupsForAction[0]?.decisionDocumentSets.some(
+            (set) => `${set.actionId}:${set.decisionId}` === activeDocumentSet,
+        );
+    const activeDocumentSetForDisplay = activeDocumentSetExists
+        ? activeDocumentSet
+        : 'all';
 
     useEffect(() => {
         if (!dialogOpen) {
@@ -320,6 +457,7 @@ export default function ActionModal({
 
         setValues(normalizeActionValues(initialValues));
         setErrors({ name: '' });
+        setActiveDocumentSet('all');
     }, [dialogOpen]);
 
     const handleSubmit = async (event) => {
@@ -335,9 +473,10 @@ export default function ActionModal({
         }
 
         const decisionBranches = visibleDecisionBranches;
-        const decisionMode = values.action_type === 'review'
-            ? values.decision_mode
-            : 'approve_deny';
+        const decisionMode =
+            values.action_type === 'review'
+                ? values.decision_mode
+                : 'approve_deny';
         const decisionLabels = decisionBranches.map((branch) =>
             branch.label.trim().toLowerCase(),
         );
@@ -349,9 +488,10 @@ export default function ActionModal({
         ) {
             setErrors({
                 name: '',
-                decision_branches: decisionMode === 'custom' && decisionBranches.length === 0
-                    ? 'Add at least one custom outcome.'
-                    : 'Give every decision outcome a unique name.',
+                decision_branches:
+                    decisionMode === 'custom' && decisionBranches.length === 0
+                        ? 'Add at least one custom outcome.'
+                        : 'Give every decision outcome a unique name.',
             });
 
             return;
@@ -363,39 +503,77 @@ export default function ActionModal({
             const submissionValues = { ...values };
             delete submissionValues.decision_branches;
             delete submissionValues.roles;
-            const { reviewer_groups: reviewerGroups, ...rest } = submissionValues;
-            const roleIds = [...new Set(reviewerGroups.flatMap((group) => group.roleIds))];
-            const documentIds = [...new Set(reviewerGroups.flatMap((group) => group.documentIds))];
+            delete submissionValues.reviewer_groups;
+            const rest = submissionValues;
+            const submissionGroups = reviewerGroupsForAction;
+            const roleIds = [
+                ...new Set([
+                    ...submissionGroups.flatMap((group) => group.roleIds),
+                    ...submissionGroups.flatMap((group) =>
+                        group.decisionDocumentSets.flatMap(
+                            (set) => set.roleIds,
+                        ),
+                    ),
+                ]),
+            ];
+            const decisionDocumentIds = submissionGroups.flatMap((group) =>
+                group.decisionDocumentSets.flatMap((set) => set.documentIds),
+            );
+            const documentIds = [
+                ...new Set([
+                    ...submissionGroups.flatMap((group) => group.documentIds),
+                    ...decisionDocumentIds,
+                ]),
+            ];
             const actionDestination = (branch) =>
                 branch?.destination.startsWith('action:')
                     ? Number(branch.destination.slice('action:'.length))
                     : null;
-            const savedDecisionBranches = decisionBranches.map(({ id, label, destination }) => ({
-                id,
-                label,
-                destination,
-            }));
+            const savedDecisionBranches = decisionBranches.map(
+                ({ id, label, destination }) => ({
+                    id,
+                    label,
+                    destination,
+                }),
+            );
 
             await onSubmit?.({
                 ...rest,
                 role_ids: roleIds,
                 document_ids: documentIds,
-                reviewer_groups: reviewerGroups.map((group) => ({
+                reviewer_groups: submissionGroups.map((group) => ({
                     id: group.id,
                     name: group.name,
                     role_ids: group.roleIds,
                     document_ids: group.documentIds,
+                    decision_document_sets: group.decisionDocumentSets.map(
+                        (set) => ({
+                            action_id: Number(set.actionId),
+                            decision_id: set.decisionId,
+                            document_ids: set.documentIds,
+                            role_ids: set.roleIds,
+                        }),
+                    ),
                 })),
                 decision_mode: decisionMode,
-                approve_action_id: decisionMode === 'approve_deny'
-                    ? actionDestination(decisionBranches.find((branch) => branch.type === 'approve'))
-                    : null,
-                deny_action_id: decisionMode === 'approve_deny'
-                    ? actionDestination(decisionBranches.find((branch) => branch.type === 'deny'))
-                    : null,
-                custom_decision_branches: decisionMode === 'custom'
-                    ? savedDecisionBranches
-                    : [],
+                approve_action_id:
+                    decisionMode === 'approve_deny'
+                        ? actionDestination(
+                              decisionBranches.find(
+                                  (branch) => branch.type === 'approve',
+                              ),
+                          )
+                        : null,
+                deny_action_id:
+                    decisionMode === 'approve_deny'
+                        ? actionDestination(
+                              decisionBranches.find(
+                                  (branch) => branch.type === 'deny',
+                              ),
+                          )
+                        : null,
+                custom_decision_branches:
+                    decisionMode === 'custom' ? savedDecisionBranches : [],
             });
             setDialogOpen(false);
         } finally {
@@ -432,12 +610,86 @@ export default function ActionModal({
     };
 
     const toggleGroupDocument = (group, documentId) => {
+        if (
+            values.action_type === 'submit' &&
+            activeDocumentSetForDisplay !== 'all'
+        ) {
+            updateReviewerGroup(group.id, {
+                decisionDocumentSets: group.decisionDocumentSets.map((set) =>
+                    `${set.actionId}:${set.decisionId}` ===
+                    activeDocumentSetForDisplay
+                        ? {
+                              ...set,
+                              documentIds: set.documentIds.includes(documentId)
+                                  ? set.documentIds.filter(
+                                        (item) => item !== documentId,
+                                    )
+                                  : [...set.documentIds, documentId],
+                          }
+                        : set,
+                ),
+            });
+
+            return;
+        }
+
         const documentIds = group.documentIds.includes(documentId)
             ? group.documentIds.filter((item) => item !== documentId)
             : [...group.documentIds, documentId];
 
         updateReviewerGroup(group.id, { documentIds });
     };
+
+    const updateDecisionSetRole = (group, roleId) => {
+        updateReviewerGroup(group.id, {
+            decisionDocumentSets: group.decisionDocumentSets.map((set) =>
+                `${set.actionId}:${set.decisionId}` ===
+                activeDocumentSetForDisplay
+                    ? {
+                          ...set,
+                          roleIds: set.roleIds.includes(roleId) ? [] : [roleId],
+                      }
+                    : set,
+            ),
+        });
+    };
+
+    const updateSubmissionRole = (group, roleId) => {
+        if (activeDocumentSetForDisplay === 'all') {
+            updateReviewerGroup(group.id, {
+                roleIds: group.roleIds.includes(roleId) ? [] : [roleId],
+            });
+
+            return;
+        }
+
+        updateDecisionSetRole(group, roleId);
+    };
+
+    const clearActiveSubmissionSet = (group) => {
+        if (activeDocumentSetForDisplay === 'all') {
+            updateReviewerGroup(group.id, {
+                roleIds: [],
+                documentIds: [],
+            });
+
+            return;
+        }
+
+        updateReviewerGroup(group.id, {
+            decisionDocumentSets: group.decisionDocumentSets.map((set) =>
+                `${set.actionId}:${set.decisionId}` ===
+                activeDocumentSetForDisplay
+                    ? { ...set, roleIds: [], documentIds: [] }
+                    : set,
+            ),
+        });
+    };
+
+    const hasConfiguredOutcomeSets = (group) =>
+        group.decisionDocumentSets.some(
+            (set) => set.roleIds.length > 0 || set.documentIds.length > 0,
+        );
 
     const updateDecisionBranch = (branchId, updates) => {
         setValues({
@@ -466,9 +718,13 @@ export default function ActionModal({
         const customBranches = values.decision_branches.filter(
             (branch) => branch.type === 'custom',
         );
-        const nextBranches = decisionMode === 'custom' && customBranches.length === 0
-            ? [...values.decision_branches, createDecisionBranch('custom', 3)]
-            : values.decision_branches;
+        const nextBranches =
+            decisionMode === 'custom' && customBranches.length === 0
+                ? [
+                      ...values.decision_branches,
+                      createDecisionBranch('custom', 3),
+                  ]
+                : values.decision_branches;
 
         setValues({
             ...values,
@@ -508,11 +764,11 @@ export default function ActionModal({
         });
     };
 
-    const visibleDecisionBranches = values.decision_branches.filter((branch) => (
+    const visibleDecisionBranches = values.decision_branches.filter((branch) =>
         values.decision_mode === 'custom'
             ? branch.type === 'custom'
-            : branch.type !== 'custom'
-    ));
+            : branch.type !== 'custom',
+    );
 
     return (
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -908,47 +1164,47 @@ export default function ActionModal({
                                 <div>
                                     <Label className="text-sm">
                                         {values.action_type === 'submit'
-                                            ? 'Submission assignments'
+                                            ? 'Submission assignment'
                                             : 'Reviewer groups'}
                                     </Label>
-                                    <p className="mt-1.5 text-sm text-muted-foreground">
-                                        {values.action_type === 'submit'
-                                            ? 'Assign a role to the files required for this action.'
-                                            : 'Choose who reviews this action and which documents they need.'}
-                                    </p>
+                                    {values.action_type !== 'submit' ? (
+                                        <p className="mt-1.5 text-sm text-muted-foreground">
+                                            Choose who reviews this action and
+                                            which documents they need.
+                                        </p>
+                                    ) : null}
                                 </div>
-                                <Button
-                                    type="button"
-                                    variant="secondary"
-                                    size="sm"
-                                    className="shrink-0"
-                                    onClick={addReviewerGroup}
-                                    aria-label={
-                                        values.action_type === 'submit'
-                                            ? 'Add assignment'
-                                            : 'Add reviewer group'
-                                    }
-                                    title={
-                                        values.action_type === 'submit'
-                                            ? 'Add assignment'
-                                            : 'Add reviewer group'
-                                    }
-                                >
-                                    <Plus className="size-4" />
-                                    {values.action_type === 'submit'
-                                        ? 'Add assignment'
-                                        : 'Add reviewer group'}
-                                </Button>
+                                {values.action_type !== 'submit' ? (
+                                    <Button
+                                        type="button"
+                                        variant="secondary"
+                                        size="sm"
+                                        className="shrink-0"
+                                        onClick={addReviewerGroup}
+                                        aria-label="Add reviewer group"
+                                        title="Add reviewer group"
+                                    >
+                                        <Plus className="size-4" />
+                                        Add reviewer group
+                                    </Button>
+                                ) : null}
                             </div>
                             {values.reviewer_groups.length ? (
                                 <div className="grid gap-4">
-                                    {values.reviewer_groups.map(
+                                    {reviewerGroupsForAction.map(
                                         (group, index) => (
                                             <div
                                                 key={group.id}
                                                 className="grid gap-4 rounded-xl border border-border bg-background p-4 sm:p-5"
                                             >
-                                                <div className="flex items-center gap-3">
+                                                <div
+                                                    className={
+                                                        values.action_type ===
+                                                        'submit'
+                                                            ? 'grid grid-cols-[minmax(0,1fr)_minmax(8rem,14rem)] items-center gap-3'
+                                                            : 'flex items-center gap-3'
+                                                    }
+                                                >
                                                     <Input
                                                         value={group.name}
                                                         onChange={(event) =>
@@ -964,60 +1220,264 @@ export default function ActionModal({
                                                         aria-label={`Assignment ${index + 1} name`}
                                                         className="h-9"
                                                     />
-                                                    <Button
-                                                        type="button"
-                                                        variant="ghost"
-                                                        size="icon"
-                                                        onClick={() =>
-                                                            removeReviewerGroup(
-                                                                group.id,
-                                                            )
-                                                        }
-                                                        aria-label={`Remove ${group.name}`}
-                                                        title={
-                                                            values.action_type ===
-                                                            'submit'
-                                                                ? 'Remove assignment'
-                                                                : 'Remove reviewer group'
-                                                        }
-                                                        className="size-9 border border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                                    >
-                                                        <Trash2 className="size-4" />
-                                                    </Button>
-                                                </div>
-                                                <div className="grid gap-4 md:grid-cols-2">
-                                                    <div className="grid gap-2.5">
-                                                        <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-                                                            Role
-                                                        </p>
-                                                        <SearchableMultiSelect
-                                                            label="Interchangeable roles"
-                                                            items={roles}
-                                                            selectedIds={
-                                                                group.roleIds
+                                                    {values.action_type ===
+                                                    'submit' ? (
+                                                        <Select
+                                                            value={
+                                                                activeDocumentSetForDisplay
                                                             }
-                                                            onToggle={(
-                                                                roleId,
-                                                            ) =>
-                                                                updateReviewerGroup(
-                                                                    group.id,
-                                                                    {
-                                                                        roleIds:
-                                                                            group.roleIds.includes(
-                                                                                roleId,
-                                                                            )
-                                                                                ? []
-                                                                                : [
-                                                                                      roleId,
-                                                                                  ],
+                                                            onValueChange={
+                                                                setActiveDocumentSet
+                                                            }
+                                                        >
+                                                            <SelectTrigger
+                                                                aria-label="Submission assignment set"
+                                                                className="h-9 w-full"
+                                                            >
+                                                                <SelectValue placeholder="Choose document and role set" />
+                                                            </SelectTrigger>
+                                                            <SelectContent className="custom-scrollbar max-h-48">
+                                                                <SelectItem value="all">
+                                                                    <span className="flex w-full items-center justify-between gap-3">
+                                                                        <span>
+                                                                            All
+                                                                        </span>
+                                                                        {!hasConfiguredOutcomeSets(
+                                                                            group,
+                                                                        ) &&
+                                                                        (group
+                                                                            .roleIds
+                                                                            .length >
+                                                                            0 ||
+                                                                            group
+                                                                                .documentIds
+                                                                                .length >
+                                                                                0) ? (
+                                                                            <span
+                                                                                className="size-2 shrink-0 rounded-full bg-primary"
+                                                                                aria-label="Assignment has configured documents or role"
+                                                                            />
+                                                                        ) : null}
+                                                                    </span>
+                                                                </SelectItem>
+                                                                {group.decisionDocumentSets.map(
+                                                                    (set) => {
+                                                                        const source =
+                                                                            decisionSources.find(
+                                                                                (
+                                                                                    item,
+                                                                                ) =>
+                                                                                    String(
+                                                                                        item.id,
+                                                                                    ) ===
+                                                                                    String(
+                                                                                        set.actionId,
+                                                                                    ),
+                                                                            );
+                                                                        const outcome =
+                                                                            source?.outcomes.find(
+                                                                                (
+                                                                                    item,
+                                                                                ) =>
+                                                                                    item.id ===
+                                                                                    set.decisionId,
+                                                                            );
+
+                                                                        if (
+                                                                            !source ||
+                                                                            !outcome
+                                                                        ) {
+                                                                            return null;
+                                                                        }
+
+                                                                        return (
+                                                                            <SelectItem
+                                                                                key={`${set.actionId}:${set.decisionId}`}
+                                                                                value={`${set.actionId}:${set.decisionId}`}
+                                                                            >
+                                                                                <span className="flex w-full items-center justify-between gap-3">
+                                                                                    <span>
+                                                                                        {
+                                                                                            source.phaseLabel
+                                                                                        }{' '}
+                                                                                        ·{' '}
+                                                                                        {
+                                                                                            source.name
+                                                                                        }{' '}
+                                                                                        ·{' '}
+                                                                                        {
+                                                                                            outcome.label
+                                                                                        }
+                                                                                    </span>
+                                                                                    {set
+                                                                                        .documentIds
+                                                                                        .length >
+                                                                                        0 ||
+                                                                                    set
+                                                                                        .roleIds
+                                                                                        .length >
+                                                                                        0 ? (
+                                                                                        <span
+                                                                                            className="size-2 shrink-0 rounded-full bg-primary"
+                                                                                            aria-label="Outcome has configured documents or role"
+                                                                                        />
+                                                                                    ) : null}
+                                                                                </span>
+                                                                            </SelectItem>
+                                                                        );
                                                                     },
+                                                                )}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    ) : null}
+                                                    {values.action_type !==
+                                                    'submit' ? (
+                                                        <Button
+                                                            type="button"
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            onClick={() =>
+                                                                removeReviewerGroup(
+                                                                    group.id,
                                                                 )
                                                             }
-                                                            placeholder="Choose interchangeable roles"
-                                                            openDirection="up"
-                                                            singleSelect
-                                                        />
+                                                            aria-label={`Remove ${group.name}`}
+                                                            title={
+                                                                values.action_type ===
+                                                                'submit'
+                                                                    ? 'Remove assignment'
+                                                                    : 'Remove reviewer group'
+                                                            }
+                                                            className="size-9 border border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                                        >
+                                                            <Trash2 className="size-4" />
+                                                        </Button>
+                                                    ) : null}
+                                                </div>
+                                                {values.action_type ===
+                                                'submit' ? (
+                                                    <div className="grid gap-4">
+                                                        <div className="flex items-center justify-between gap-3">
+                                                            <Label>
+                                                                Required
+                                                                documents
+                                                            </Label>
+                                                            <Button
+                                                                type="button"
+                                                                variant="ghost"
+                                                                size="sm"
+                                                                className="h-8 gap-1.5 px-2 text-muted-foreground"
+                                                                onClick={() =>
+                                                                    clearActiveSubmissionSet(
+                                                                        group,
+                                                                    )
+                                                                }
+                                                                disabled={
+                                                                    activeDocumentSetForDisplay ===
+                                                                    'all'
+                                                                        ? group
+                                                                              .roleIds
+                                                                              .length ===
+                                                                              0 &&
+                                                                          group
+                                                                              .documentIds
+                                                                              .length ===
+                                                                              0
+                                                                        : !group.decisionDocumentSets.some(
+                                                                              (
+                                                                                  set,
+                                                                              ) =>
+                                                                                  `${set.actionId}:${set.decisionId}` ===
+                                                                                      activeDocumentSetForDisplay &&
+                                                                                  (set
+                                                                                      .roleIds
+                                                                                      .length >
+                                                                                      0 ||
+                                                                                      set
+                                                                                          .documentIds
+                                                                                          .length >
+                                                                                          0),
+                                                                          )
+                                                                }
+                                                            >
+                                                                <Trash2 className="size-3.5" />
+                                                                Clear current
+                                                                set
+                                                            </Button>
+                                                        </div>
                                                     </div>
+                                                ) : null}
+                                                <div className="grid gap-4 md:grid-cols-2">
+                                                    {values.action_type ===
+                                                    'submit' ? (
+                                                        <div className="grid gap-2.5">
+                                                            <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                                                                Role responsible
+                                                            </p>
+                                                            <SearchableMultiSelect
+                                                                label="Role responsible for this assignment set"
+                                                                items={roles}
+                                                                selectedIds={
+                                                                    activeDocumentSetForDisplay ===
+                                                                    'all'
+                                                                        ? group.roleIds
+                                                                        : (group.decisionDocumentSets.find(
+                                                                              (
+                                                                                  set,
+                                                                              ) =>
+                                                                                  `${set.actionId}:${set.decisionId}` ===
+                                                                                  activeDocumentSetForDisplay,
+                                                                          )
+                                                                              ?.roleIds ??
+                                                                          [])
+                                                                }
+                                                                onToggle={(
+                                                                    roleId,
+                                                                ) =>
+                                                                    updateSubmissionRole(
+                                                                        group,
+                                                                        roleId,
+                                                                    )
+                                                                }
+                                                                placeholder="Choose the role that will work on this set"
+                                                                openDirection="up"
+                                                                singleSelect
+                                                            />
+                                                        </div>
+                                                    ) : (
+                                                        <div className="grid gap-2.5">
+                                                            <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                                                                Role
+                                                            </p>
+                                                            <SearchableMultiSelect
+                                                                label="Interchangeable roles"
+                                                                items={roles}
+                                                                selectedIds={
+                                                                    group.roleIds
+                                                                }
+                                                                onToggle={(
+                                                                    roleId,
+                                                                ) =>
+                                                                    updateReviewerGroup(
+                                                                        group.id,
+                                                                        {
+                                                                            roleIds:
+                                                                                group.roleIds.includes(
+                                                                                    roleId,
+                                                                                )
+                                                                                    ? []
+                                                                                    : [
+                                                                                          roleId,
+                                                                                      ],
+                                                                        },
+                                                                    )
+                                                                }
+                                                                placeholder="Choose interchangeable roles"
+                                                                openDirection="up"
+                                                                singleSelect
+                                                            />
+                                                        </div>
+                                                    )}
                                                     <div className="grid gap-2.5">
                                                         <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
                                                             Documents
@@ -1026,7 +1486,20 @@ export default function ActionModal({
                                                             label="Documents for this group"
                                                             items={documents}
                                                             selectedIds={
-                                                                group.documentIds
+                                                                values.action_type ===
+                                                                    'submit' &&
+                                                                activeDocumentSetForDisplay !==
+                                                                    'all'
+                                                                    ? (group.decisionDocumentSets.find(
+                                                                          (
+                                                                              set,
+                                                                          ) =>
+                                                                              `${set.actionId}:${set.decisionId}` ===
+                                                                              activeDocumentSetForDisplay,
+                                                                      )
+                                                                          ?.documentIds ??
+                                                                      [])
+                                                                    : group.documentIds
                                                             }
                                                             onToggle={(
                                                                 documentId,
@@ -1036,7 +1509,12 @@ export default function ActionModal({
                                                                     documentId,
                                                                 )
                                                             }
-                                                            placeholder="Choose optional documents"
+                                                            placeholder={
+                                                                values.action_type ===
+                                                                'submit'
+                                                                    ? 'Choose documents'
+                                                                    : 'Choose optional documents'
+                                                            }
                                                             openDirection="up"
                                                         />
                                                     </div>
@@ -1048,7 +1526,7 @@ export default function ActionModal({
                             ) : (
                                 <div className="rounded-lg border border-dashed border-border p-5 text-sm leading-relaxed text-muted-foreground">
                                     {values.action_type === 'submit'
-                                        ? 'Add an assignment, then choose a role and the documents it needs.'
+                                        ? 'Configure the default documents and any outcome-specific documents for this submission.'
                                         : 'Add a reviewer group, then choose a role and the documents it needs.'}
                                 </div>
                             )}

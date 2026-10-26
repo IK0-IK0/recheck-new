@@ -162,7 +162,11 @@ class ProcessManagementController extends Controller
             'custom_decision_branches.*.id' => ['required', 'string', 'max:255', 'distinct'],
             'custom_decision_branches.*.label' => ['required', 'string', 'max:100', 'distinct:ignore_case'],
             'custom_decision_branches.*.destination' => $this->customDecisionDestinationRules($phase, null),
-            'reviewer_groups' => ['sometimes', 'array', 'max:20'],
+            'reviewer_groups' => [
+                'sometimes',
+                'array',
+                $request->input('action_type') === 'submit' ? 'max:1' : 'max:20',
+            ],
             'reviewer_groups.*.id' => ['required_with:reviewer_groups', 'string', 'max:255', 'distinct'],
             'reviewer_groups.*.name' => ['required_with:reviewer_groups', 'string', 'max:100'],
             'reviewer_groups.*.role_ids' => ['sometimes', 'array', 'max:1'],
@@ -173,6 +177,23 @@ class ProcessManagementController extends Controller
             }],
             'reviewer_groups.*.document_ids' => ['sometimes', 'array'],
             'reviewer_groups.*.document_ids.*' => ['integer', function (string $attribute, mixed $value, \Closure $fail): void {
+                if (! Document::on('tenant')->whereKey($value)->exists()) {
+                    $fail('The selected document is invalid.');
+                }
+            }],
+            'reviewer_groups.*.decision_document_sets' => $request->input('action_type') === 'submit'
+                ? ['sometimes', 'array']
+                : ['prohibited'],
+            'reviewer_groups.*.decision_document_sets.*.action_id' => $this->decisionSetActionRules($phase, null),
+            'reviewer_groups.*.decision_document_sets.*.decision_id' => $this->decisionSetOutcomeRules($request),
+            'reviewer_groups.*.decision_document_sets.*.role_ids' => ['sometimes', 'array', 'max:1'],
+            'reviewer_groups.*.decision_document_sets.*.role_ids.*' => ['integer', function (string $attribute, mixed $value, \Closure $fail): void {
+                if (! Role::on('tenant')->whereKey($value)->exists()) {
+                    $fail('The selected role is invalid.');
+                }
+            }],
+            'reviewer_groups.*.decision_document_sets.*.document_ids' => ['sometimes', 'array'],
+            'reviewer_groups.*.decision_document_sets.*.document_ids.*' => ['integer', function (string $attribute, mixed $value, \Closure $fail): void {
                 if (! Document::on('tenant')->whereKey($value)->exists()) {
                     $fail('The selected document is invalid.');
                 }
@@ -236,7 +257,11 @@ class ProcessManagementController extends Controller
             'custom_decision_branches.*.id' => ['required', 'string', 'max:255', 'distinct'],
             'custom_decision_branches.*.label' => ['required', 'string', 'max:100', 'distinct:ignore_case'],
             'custom_decision_branches.*.destination' => $this->customDecisionDestinationRules($action->phase, $action),
-            'reviewer_groups' => ['sometimes', 'array', 'max:20'],
+            'reviewer_groups' => [
+                'sometimes',
+                'array',
+                $request->input('action_type') === 'submit' ? 'max:1' : 'max:20',
+            ],
             'reviewer_groups.*.id' => ['required_with:reviewer_groups', 'string', 'max:255', 'distinct'],
             'reviewer_groups.*.name' => ['required_with:reviewer_groups', 'string', 'max:100'],
             'reviewer_groups.*.role_ids' => ['sometimes', 'array', 'max:1'],
@@ -247,6 +272,23 @@ class ProcessManagementController extends Controller
             }],
             'reviewer_groups.*.document_ids' => ['sometimes', 'array'],
             'reviewer_groups.*.document_ids.*' => ['integer', function (string $attribute, mixed $value, \Closure $fail): void {
+                if (! Document::on('tenant')->whereKey($value)->exists()) {
+                    $fail('The selected document is invalid.');
+                }
+            }],
+            'reviewer_groups.*.decision_document_sets' => $request->input('action_type') === 'submit'
+                ? ['sometimes', 'array']
+                : ['prohibited'],
+            'reviewer_groups.*.decision_document_sets.*.action_id' => $this->decisionSetActionRules($action->phase, $action),
+            'reviewer_groups.*.decision_document_sets.*.decision_id' => $this->decisionSetOutcomeRules($request),
+            'reviewer_groups.*.decision_document_sets.*.role_ids' => ['sometimes', 'array', 'max:1'],
+            'reviewer_groups.*.decision_document_sets.*.role_ids.*' => ['integer', function (string $attribute, mixed $value, \Closure $fail): void {
+                if (! Role::on('tenant')->whereKey($value)->exists()) {
+                    $fail('The selected role is invalid.');
+                }
+            }],
+            'reviewer_groups.*.decision_document_sets.*.document_ids' => ['sometimes', 'array'],
+            'reviewer_groups.*.decision_document_sets.*.document_ids.*' => ['integer', function (string $attribute, mixed $value, \Closure $fail): void {
                 if (! Document::on('tenant')->whereKey($value)->exists()) {
                     $fail('The selected document is invalid.');
                 }
@@ -380,17 +422,121 @@ class ProcessManagementController extends Controller
      */
     private function assignmentIds(Request $request, string $key): array
     {
-        $groupIds = array_merge(
-            ...array_map(
-                fn (array $group): array => $group[$key] ?? [],
-                $request->input('reviewer_groups', []),
-            ),
-        );
+        $groupIds = collect($request->input('reviewer_groups', []))
+            ->flatMap(function (array $group) use ($key): array {
+                $ids = $group[$key] ?? [];
+
+                if ($key === 'document_ids') {
+                    $ids = [
+                        ...$ids,
+                        ...collect($group['decision_document_sets'] ?? [])
+                            ->flatMap(fn (array $set): array => $set['document_ids'] ?? [])
+                            ->all(),
+                    ];
+                }
+
+                if ($key === 'role_ids') {
+                    $ids = [
+                        ...$ids,
+                        ...collect($group['decision_document_sets'] ?? [])
+                            ->flatMap(fn (array $set): array => $set['role_ids'] ?? [])
+                            ->all(),
+                    ];
+                }
+
+                return $ids;
+            })
+            ->all();
 
         return array_values(array_unique([
             ...$request->input($key, []),
             ...$groupIds,
         ]));
+    }
+
+    /**
+     * @return array<int, mixed>
+     */
+    private function decisionSetActionRules(Phase $targetPhase, ?Action $targetAction): array
+    {
+        return [
+            'required',
+            'integer',
+            function (string $attribute, mixed $value, \Closure $fail) use ($targetPhase, $targetAction): void {
+                $sourceAction = Action::query()->with('phase')->find($value);
+                $sourcePhase = $sourceAction?->phase;
+
+                if (
+                    ! $sourceAction
+                    || $sourceAction->action_type !== 'review'
+                    || ! $sourcePhase
+                    || (int) $sourcePhase->process_id !== (int) $targetPhase->process_id
+                ) {
+                    $fail('Choose a review action from this workflow.');
+
+                    return;
+                }
+
+                $sourcePrecedesTarget = (int) $sourcePhase->order < (int) $targetPhase->order
+                    || (
+                        (int) $sourcePhase->order === (int) $targetPhase->order
+                        && (int) $sourcePhase->id < (int) $targetPhase->id
+                    );
+
+                if ($sourcePhase->id === $targetPhase->id) {
+                    $sourcePrecedesTarget = $targetAction === null
+                        || (int) $sourceAction->order < (int) $targetAction->order
+                        || (
+                            (int) $sourceAction->order === (int) $targetAction->order
+                            && (int) $sourceAction->id < (int) $targetAction->id
+                        );
+                }
+
+                if (! $sourcePrecedesTarget) {
+                    $fail('Outcome document sets must reference an earlier review action.');
+                }
+            },
+        ];
+    }
+
+    /**
+     * @return array<int, mixed>
+     */
+    private function decisionSetOutcomeRules(Request $request): array
+    {
+        return [
+            'required',
+            'string',
+            function (string $attribute, mixed $value, \Closure $fail) use ($request): void {
+                if (! preg_match('/reviewer_groups\.(\d+)\.decision_document_sets\.(\d+)\.decision_id/', $attribute, $matches)) {
+                    $fail('The selected review outcome is invalid.');
+
+                    return;
+                }
+
+                $actionId = $request->input(
+                    "reviewer_groups.{$matches[1]}.decision_document_sets.{$matches[2]}.action_id",
+                );
+                $sourceAction = Action::query()->find($actionId);
+
+                if (! $sourceAction) {
+                    $fail('The selected review outcome is invalid.');
+
+                    return;
+                }
+
+                $validOutcomeIds = $sourceAction->decision_mode === 'custom'
+                    ? collect($sourceAction->custom_decision_branches ?? [])
+                        ->pluck('id')
+                        ->map(fn ($id): string => (string) $id)
+                        ->all()
+                    : ['approve', 'deny'];
+
+                if (! in_array((string) $value, $validOutcomeIds, true)) {
+                    $fail('Choose an outcome configured on the selected review action.');
+                }
+            },
+        ];
     }
 
     /**

@@ -3,7 +3,9 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Casts\Attribute;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Tenant users stored in the superadmin database (tenant_users table).
@@ -28,6 +30,21 @@ class SuperadminTenantUser extends User
     public function institution(): BelongsTo
     {
         return $this->belongsTo(User::class, 'institution_id')->where('role', 'institution');
+    }
+
+    /**
+     * Get roles assigned to this central user in the active tenant database.
+     *
+     * @return Collection<int, Role>
+     */
+    public function tenantRoles(): Collection
+    {
+        $roleIds = DB::connection('tenant')
+            ->table('role_tenant_user')
+            ->where('tenant_user_id', $this->getKey())
+            ->pluck('role_id');
+
+        return Role::query()->with('permissions')->whereIn('id', $roleIds)->get();
     }
 
     protected function themeColor(): Attribute

@@ -1,6 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useForm } from '@inertiajs/react';
-import { Edit3, FolderKanban, Plus, Trash2, ChevronDown, GitBranch, Workflow } from 'lucide-react';
+import {
+    Edit3,
+    FolderKanban,
+    Plus,
+    Trash2,
+    ChevronDown,
+    GitBranch,
+    Workflow,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import PhaseComponent from '@/components/PhaseComponent';
 import ProcessModal from '@/components/ProcessModal';
@@ -18,12 +26,21 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog';
 
-const decisionBranchColors = ['#8b5cf6', '#f59e0b', '#06b6d4', '#ec4899', '#84cc16', '#f97316'];
+const decisionBranchColors = [
+    '#8b5cf6',
+    '#f59e0b',
+    '#06b6d4',
+    '#ec4899',
+    '#84cc16',
+    '#f97316',
+];
 
 function buildDecisionBranches(action, actions = [], nextPhase = null) {
     const actionById = new Map(actions.map((item) => [String(item.id), item]));
-    const nextAction = actions[actions.findIndex((item) => item.id === action.id) + 1];
-    const nextStepName = nextAction?.name ?? nextPhase?.name ?? 'No next step configured';
+    const nextAction =
+        actions[actions.findIndex((item) => item.id === action.id) + 1];
+    const nextStepName =
+        nextAction?.name ?? nextPhase?.name ?? 'No next step configured';
     const customBranches = action.custom_decision_branches ?? [];
 
     if (action.decision_mode === 'custom') {
@@ -36,19 +53,26 @@ function buildDecisionBranches(action, actions = [], nextPhase = null) {
             return {
                 ...branch,
                 type: 'custom',
-                destination_label: target?.name
-                    ?? (branch.destination === 'end' ? 'End this path' : nextStepName),
-                color: decisionBranchColors[index % decisionBranchColors.length],
+                destination_label:
+                    target?.name ??
+                    (branch.destination === 'end'
+                        ? 'End this path'
+                        : nextStepName),
+                color: decisionBranchColors[
+                    index % decisionBranchColors.length
+                ],
             };
         });
     }
 
-    const approveTarget = action.approve_action_id == null
-        ? null
-        : actionById.get(String(action.approve_action_id));
-    const denyTarget = action.deny_action_id == null
-        ? null
-        : actionById.get(String(action.deny_action_id));
+    const approveTarget =
+        action.approve_action_id == null
+            ? null
+            : actionById.get(String(action.approve_action_id));
+    const denyTarget =
+        action.deny_action_id == null
+            ? null
+            : actionById.get(String(action.deny_action_id));
 
     return [
         {
@@ -70,8 +94,14 @@ function buildDecisionBranches(action, actions = [], nextPhase = null) {
     ];
 }
 
-export default function ProcessManagement({ processes = [], roles = [], documents = [] }) {
-    const [selectedProcessId, setSelectedProcessId] = useState(processes[0]?.id ?? null);
+export default function ProcessManagement({
+    processes = [],
+    roles = [],
+    documents = [],
+}) {
+    const [selectedProcessId, setSelectedProcessId] = useState(
+        processes[0]?.id ?? null,
+    );
     const [activePhaseId, setActivePhaseId] = useState(null);
     const [editingProcess, setEditingProcess] = useState(null);
     const [editingPhase, setEditingPhase] = useState(null);
@@ -86,23 +116,89 @@ export default function ProcessManagement({ processes = [], roles = [], document
     const form = useForm({ name: '', description: '' });
     const processErrors = form.errors || {};
 
-    const activeProcess = processes.find((p) => p.id === selectedProcessId) ?? null;
+    const activeProcess =
+        processes.find((p) => p.id === selectedProcessId) ?? null;
 
     const phases = activeProcess?.phases ?? [];
-    const activePhase = phases.find((p) => p.id === activePhaseId) ?? phases[0] ?? null;
+    const activePhase =
+        phases.find((p) => p.id === activePhaseId) ?? phases[0] ?? null;
     const activePhaseActions = activePhase?.actions ?? [];
-    const activePhaseIndex = phases.findIndex((phase) => phase.id === activePhase?.id);
-    const nextPhase = activePhaseIndex >= 0 ? phases[activePhaseIndex + 1] ?? null : null;
-    const graphActions = useMemo(() => activePhaseActions.map((action) => ({
-        ...action,
-        decision_branches: action.action_type === 'review'
-            ? buildDecisionBranches(
-                action,
-                activePhaseActions,
-                nextPhase,
-            )
-            : [],
-    })), [activePhaseActions, nextPhase]);
+    const activePhaseIndex = phases.findIndex(
+        (phase) => phase.id === activePhase?.id,
+    );
+    const nextPhase =
+        activePhaseIndex >= 0 ? (phases[activePhaseIndex + 1] ?? null) : null;
+    const getDecisionSources = (targetPhase, targetAction = null) => {
+        if (!targetPhase) {
+            return [];
+        }
+
+        const targetPhaseIndex = phases.findIndex(
+            (phase) => phase.id === targetPhase.id,
+        );
+
+        const priorReviewActions = phases
+            .slice(0, targetPhaseIndex + 1)
+            .flatMap((phase) =>
+                (phase.actions ?? [])
+                    .filter((action) => {
+                        if (action.action_type !== 'review') {
+                            return false;
+                        }
+
+                        if (phase.id !== targetPhase.id || !targetAction) {
+                            return true;
+                        }
+
+                        if (action.id === targetAction.id) {
+                            return false;
+                        }
+
+                        const actionIndex = phase.actions.findIndex(
+                            (item) => item.id === action.id,
+                        );
+                        const targetActionIndex = phase.actions.findIndex(
+                            (item) => item.id === targetAction.id,
+                        );
+
+                        return actionIndex < targetActionIndex;
+                    })
+                    .map((action) => ({
+                        id: action.id,
+                        name: action.name,
+                        phaseLabel: `P-${phases.indexOf(phase) + 1}`,
+                        outcomes:
+                            action.decision_mode === 'custom'
+                                ? (action.custom_decision_branches ?? []).map(
+                                      (branch) => ({
+                                          id: branch.id,
+                                          label: branch.label,
+                                      }),
+                                  )
+                                : [
+                                      { id: 'approve', label: 'Approve' },
+                                      { id: 'deny', label: 'Deny' },
+                                  ],
+                    })),
+            );
+
+        return priorReviewActions.slice(-1);
+    };
+    const graphActions = useMemo(
+        () =>
+            activePhaseActions.map((action) => ({
+                ...action,
+                decision_branches:
+                    action.action_type === 'review'
+                        ? buildDecisionBranches(
+                              action,
+                              activePhaseActions,
+                              nextPhase,
+                          )
+                        : [],
+            })),
+        [activePhaseActions, nextPhase],
+    );
 
     // When the selected process changes, reset to the first phase
     useEffect(() => {
@@ -142,7 +238,11 @@ export default function ProcessManagement({ processes = [], roles = [], document
     };
 
     const handleDeleteProcess = async (process) => {
-        if (!window.confirm(`Delete process "${process.name}"? This will remove all nested phases and actions.`)) {
+        if (
+            !window.confirm(
+                `Delete process "${process.name}"? This will remove all nested phases and actions.`,
+            )
+        ) {
             return;
         }
 
@@ -151,7 +251,9 @@ export default function ProcessManagement({ processes = [], roles = [], document
         await form.delete(`/tenant/processes/${process.id}`, {
             onSuccess: () => {
                 toast.success('Process deleted.');
-                setSelectedProcessId(processes.find((p) => p.id !== process.id)?.id ?? null);
+                setSelectedProcessId(
+                    processes.find((p) => p.id !== process.id)?.id ?? null,
+                );
             },
             onError: () => {
                 toast.error('Unable to delete process.');
@@ -192,7 +294,11 @@ export default function ProcessManagement({ processes = [], roles = [], document
     };
 
     const handleDeletePhase = async (phase) => {
-        if (!window.confirm(`Delete phase "${phase.name}"? This will remove all nested actions.`)) {
+        if (
+            !window.confirm(
+                `Delete phase "${phase.name}"? This will remove all nested actions.`,
+            )
+        ) {
             return;
         }
 
@@ -209,7 +315,9 @@ export default function ProcessManagement({ processes = [], roles = [], document
     };
 
     const handleCreateAction = async (phase, values) => {
-        const existingActionIds = new Set((phase.actions ?? []).map((action) => action.id));
+        const existingActionIds = new Set(
+            (phase.actions ?? []).map((action) => action.id),
+        );
         form.clearErrors();
         form.setData(values);
         await form.post(`/tenant/phases/${phase.id}/actions`, {
@@ -219,10 +327,11 @@ export default function ProcessManagement({ processes = [], roles = [], document
                 const savedPhase = page.props.processes
                     .flatMap((process) => process.phases)
                     .find((item) => item.id === phase.id);
-                const savedAction = savedPhase?.actions?.find((action) => (
-                    !existingActionIds.has(action.id) && action.name === values.name
-                ));
-
+                const savedAction = savedPhase?.actions?.find(
+                    (action) =>
+                        !existingActionIds.has(action.id) &&
+                        action.name === values.name,
+                );
             },
             onError: () => {
                 toast.error('Unable to create action.');
@@ -289,16 +398,19 @@ export default function ProcessManagement({ processes = [], roles = [], document
 
         form.clearErrors();
         form.setData({ order: phaseIds });
-        await form.post(`/tenant/processes/${activeProcess.id}/phases/reorder`, {
-            preserveState: true,
-            preserveScroll: true,
-            onSuccess: () => {
-                toast.success('Phase order updated.');
+        await form.post(
+            `/tenant/processes/${activeProcess.id}/phases/reorder`,
+            {
+                preserveState: true,
+                preserveScroll: true,
+                onSuccess: () => {
+                    toast.success('Phase order updated.');
+                },
+                onError: () => {
+                    toast.error('Unable to reorder phases.');
+                },
             },
-            onError: () => {
-                toast.error('Unable to reorder phases.');
-            },
-        });
+        );
     };
 
     const handleActionReorder = async (actionIds) => {
@@ -329,14 +441,19 @@ export default function ProcessManagement({ processes = [], roles = [], document
             {/* Compact header similar to DatabaseSetup */}
             <div className="flex h-full flex-col overflow-hidden">
                 {/* Header - fixed at top */}
-                <div className="flex items-center justify-between border-b border-border bg-surface px-6 py-3">
+                <div className="bg-surface flex items-center justify-between border-b border-border px-6 py-3">
                     <div className="flex items-center gap-3">
                         <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10">
                             <Workflow className="size-4 text-primary" />
                         </div>
                         <div>
-                            <h1 className="text-lg font-semibold">Process Management</h1>
-                            <p className="text-xs text-muted-foreground">Manage processes, phases, and actions for your workflow</p>
+                            <h1 className="text-lg font-semibold">
+                                Process Management
+                            </h1>
+                            <p className="text-xs text-muted-foreground">
+                                Manage processes, phases, and actions for your
+                                workflow
+                            </p>
                         </div>
                     </div>
 
@@ -346,16 +463,23 @@ export default function ProcessManagement({ processes = [], roles = [], document
                             <div className="relative">
                                 <select
                                     value={selectedProcessId ?? ''}
-                                    onChange={(e) => setSelectedProcessId(Number(e.target.value))}
-                                    className="h-8 appearance-none rounded-lg border border-input bg-background py-1.5 pl-3 pr-8 text-xs shadow-xs outline-none transition focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+                                    onChange={(e) =>
+                                        setSelectedProcessId(
+                                            Number(e.target.value),
+                                        )
+                                    }
+                                    className="h-8 appearance-none rounded-lg border border-input bg-background py-1.5 pr-8 pl-3 text-xs shadow-xs transition outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
                                 >
                                     {processes.map((process) => (
-                                        <option key={process.id} value={process.id}>
+                                        <option
+                                            key={process.id}
+                                            value={process.id}
+                                        >
                                             {process.name}
                                         </option>
                                     ))}
                                 </select>
-                                <ChevronDown className="pointer-events-none absolute right-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                                <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                             </div>
                         ) : null}
 
@@ -363,22 +487,34 @@ export default function ProcessManagement({ processes = [], roles = [], document
                             title="Add process"
                             submitLabel="Create process"
                             onSubmit={handleCreateProcess}
-                            trigger={<Button size="sm" className="h-8 text-xs">Add Process</Button>}
+                            trigger={
+                                <Button size="sm" className="h-8 text-xs">
+                                    Add Process
+                                </Button>
+                            }
                         />
                     </div>
                 </div>
 
                 {processes.length ? (
                     activeProcess ? (
-                        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                             {/* Phase pipeline visualization - fixed */}
-                            <div className="flex-none border-b border-border bg-surface">
+                            <div className="bg-surface flex-none border-b border-border">
                                 <div className="p-4 pb-3">
                                     <div className="mb-3 flex items-center justify-between">
                                         <div>
-                                            <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground"><FolderKanban className="size-3.5 text-primary" aria-hidden="true" />{activeProcess.name}</p>
+                                            <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                                                <FolderKanban
+                                                    className="size-3.5 text-primary"
+                                                    aria-hidden="true"
+                                                />
+                                                {activeProcess.name}
+                                            </p>
                                             {activeProcess.description ? (
-                                                <p className="mt-0.5 text-xs text-muted-foreground">{activeProcess.description}</p>
+                                                <p className="mt-0.5 text-xs text-muted-foreground">
+                                                    {activeProcess.description}
+                                                </p>
                                             ) : null}
                                         </div>
                                         <div className="flex items-center gap-2">
@@ -387,21 +523,29 @@ export default function ProcessManagement({ processes = [], roles = [], document
                                                 size="sm"
                                                 type="button"
                                                 onClick={() => {
-                                                    setEditingProcess(activeProcess);
+                                                    setEditingProcess(
+                                                        activeProcess,
+                                                    );
                                                     setIsEditProcessOpen(true);
                                                 }}
                                                 className="h-7 text-xs"
                                             >
-                                                <Edit3 className="size-3.5" /> Edit
+                                                <Edit3 className="size-3.5" />{' '}
+                                                Edit
                                             </Button>
                                             <Button
                                                 variant="destructive"
                                                 size="sm"
                                                 type="button"
-                                                onClick={() => handleDeleteProcess(activeProcess)}
+                                                onClick={() =>
+                                                    handleDeleteProcess(
+                                                        activeProcess,
+                                                    )
+                                                }
                                                 className="h-7 text-xs"
                                             >
-                                                <Trash2 className="size-3.5" /> Delete
+                                                <Trash2 className="size-3.5" />{' '}
+                                                Delete
                                             </Button>
                                         </div>
                                     </div>
@@ -409,9 +553,13 @@ export default function ProcessManagement({ processes = [], roles = [], document
                                     <div className="-mx-4 min-w-0 rounded-xl border border-border bg-background pb-1">
                                         <PhasePipeline
                                             phases={activeProcess.phases ?? []}
-                                            activePhaseId={activePhase?.id ?? null}
+                                            activePhaseId={
+                                                activePhase?.id ?? null
+                                            }
                                             onPhaseSelect={setActivePhaseId}
-                                            onAddPhase={() => setIsCreatePhaseOpen(true)}
+                                            onAddPhase={() =>
+                                                setIsCreatePhaseOpen(true)
+                                            }
                                             onPhaseReorder={handlePhaseReorder}
                                         />
                                     </div>
@@ -419,20 +567,26 @@ export default function ProcessManagement({ processes = [], roles = [], document
                             </div>
 
                             {/* Actions flow graph - fills remaining space */}
-                            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-                                <div className="flex-none flex items-center justify-between px-4 py-3 border-border bg-surface">
+                            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                                <div className="bg-surface flex flex-none items-center justify-between border-border px-4 py-3">
                                     <div>
                                         <p className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-                                            <GitBranch className="size-3.5 text-primary" aria-hidden="true" />
-                                            {activePhase ? activePhase.name : phases.length === 0 ? 'No phases yet' : 'Select a phase'}
+                                            <GitBranch
+                                                className="size-3.5 text-primary"
+                                                aria-hidden="true"
+                                            />
+                                            {activePhase
+                                                ? activePhase.name
+                                                : phases.length === 0
+                                                  ? 'No phases yet'
+                                                  : 'Select a phase'}
                                         </p>
                                         <p className="text-[11px] text-muted-foreground">
-                                            {activePhase 
+                                            {activePhase
                                                 ? `${activePhase.actions?.length ?? 0} action${(activePhase.actions?.length ?? 0) !== 1 ? 's' : ''}`
-                                                : phases.length === 0 
-                                                    ? 'Add a phase to get started'
-                                                    : 'No phase selected'
-                                            }
+                                                : phases.length === 0
+                                                  ? 'Add a phase to get started'
+                                                  : 'No phase selected'}
                                         </p>
                                     </div>
                                     {activePhase ? (
@@ -441,49 +595,65 @@ export default function ProcessManagement({ processes = [], roles = [], document
                                                 variant="secondary"
                                                 size="sm"
                                                 onClick={() => {
-                                                    setEditingPhase(activePhase);
+                                                    setEditingPhase(
+                                                        activePhase,
+                                                    );
                                                     setIsEditPhaseOpen(true);
                                                 }}
                                                 type="button"
                                                 className="h-7 text-xs"
                                             >
-                                                <Edit3 className="size-3.5" /> Edit phase
+                                                <Edit3 className="size-3.5" />{' '}
+                                                Edit phase
                                             </Button>
                                             <Button
                                                 variant="destructive"
                                                 size="sm"
-                                                onClick={() => handleDeletePhase(activePhase)}
+                                                onClick={() =>
+                                                    handleDeletePhase(
+                                                        activePhase,
+                                                    )
+                                                }
                                                 type="button"
                                                 className="h-7 text-xs"
                                             >
-                                                <Trash2 className="size-3.5" /> Delete phase
+                                                <Trash2 className="size-3.5" />{' '}
+                                                Delete phase
                                             </Button>
                                         </div>
                                     ) : phases.length === 0 ? (
                                         <Button
                                             variant="default"
                                             size="sm"
-                                            onClick={() => setIsCreatePhaseOpen(true)}
+                                            onClick={() =>
+                                                setIsCreatePhaseOpen(true)
+                                            }
                                             type="button"
                                             className="h-7 text-xs"
                                         >
-                                            <Plus className="size-3.5" /> Add first phase
+                                            <Plus className="size-3.5" /> Add
+                                            first phase
                                         </Button>
                                     ) : null}
                                 </div>
 
-                                <div className="flex-1 min-h-0">
+                                <div className="min-h-0 flex-1">
                                     {activePhase ? (
                                         <ActionsFlowGraph
                                             key={activePhase.id}
                                             actions={graphActions}
-                                            onReorderActions={handleActionReorder}
+                                            onReorderActions={
+                                                handleActionReorder
+                                            }
                                             onAddAction={() => {
                                                 setSelectedPhase(activePhase);
                                                 setIsCreateActionOpen(true);
                                             }}
                                             onEdit={(action) => {
-                                                setEditingAction({ action, phase: activePhase });
+                                                setEditingAction({
+                                                    action,
+                                                    phase: activePhase,
+                                                });
                                                 setIsEditActionOpen(true);
                                             }}
                                             onDelete={handleDeleteAction}
@@ -492,27 +662,40 @@ export default function ProcessManagement({ processes = [], roles = [], document
                                         />
                                     ) : phases.length === 0 ? (
                                         <div className="flex h-full items-center justify-center">
-                                            <div className="text-center space-y-4">
-                                                <div className="flex size-16 items-center justify-center rounded-full bg-muted mx-auto">
+                                            <div className="space-y-4 text-center">
+                                                <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-muted">
                                                     <Plus className="size-8 text-muted-foreground" />
                                                 </div>
                                                 <div className="space-y-2">
-                                                    <p className="font-medium text-foreground">No phases in this process</p>
-                                                    <p className="text-sm text-muted-foreground max-w-sm">
-                                                        Add your first phase to start building your workflow. Each phase contains actions that define the steps.
+                                                    <p className="font-medium text-foreground">
+                                                        No phases in this
+                                                        process
+                                                    </p>
+                                                    <p className="max-w-sm text-sm text-muted-foreground">
+                                                        Add your first phase to
+                                                        start building your
+                                                        workflow. Each phase
+                                                        contains actions that
+                                                        define the steps.
                                                     </p>
                                                 </div>
                                                 <Button
-                                                    onClick={() => setIsCreatePhaseOpen(true)}
+                                                    onClick={() =>
+                                                        setIsCreatePhaseOpen(
+                                                            true,
+                                                        )
+                                                    }
                                                     type="button"
                                                 >
-                                                    <Plus className="size-4" /> Add phase
+                                                    <Plus className="size-4" />{' '}
+                                                    Add phase
                                                 </Button>
                                             </div>
                                         </div>
                                     ) : (
                                         <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                                            No phase selected. Click on a phase above to view its actions.
+                                            No phase selected. Click on a phase
+                                            above to view its actions.
                                         </div>
                                     )}
                                 </div>
@@ -520,12 +703,14 @@ export default function ProcessManagement({ processes = [], roles = [], document
                         </div>
                     ) : null
                 ) : (
-                    <div className="flex-1 flex items-center justify-center">
-                        <div className="text-center p-8 max-w-md">
-                            <div className="flex size-16 items-center justify-center rounded-full bg-muted mx-auto mb-4">
+                    <div className="flex flex-1 items-center justify-center">
+                        <div className="max-w-md p-8 text-center">
+                            <div className="mx-auto mb-4 flex size-16 items-center justify-center rounded-full bg-muted">
                                 <Plus className="size-8 text-muted-foreground" />
                             </div>
-                            <p className="font-medium text-foreground mb-2">No processes found</p>
+                            <p className="mb-2 font-medium text-foreground">
+                                No processes found
+                            </p>
                             <p className="text-sm text-muted-foreground">
                                 Add a process to start building your workflow.
                             </p>
@@ -545,7 +730,10 @@ export default function ProcessManagement({ processes = [], roles = [], document
                             setEditingProcess(null);
                         }
                     }}
-                    initialValues={{ name: editingProcess.name, description: editingProcess.description || '' }}
+                    initialValues={{
+                        name: editingProcess.name,
+                        description: editingProcess.description || '',
+                    }}
                     onSubmit={handleUpdateProcess}
                 />
             ) : null}
@@ -584,6 +772,7 @@ export default function ProcessManagement({ processes = [], roles = [], document
                     roles={roles}
                     documents={documents}
                     actions={selectedPhase.actions ?? []}
+                    decisionSources={getDecisionSources(selectedPhase)}
                     open={isCreateActionOpen}
                     onOpenChange={(nextOpen) => {
                         setIsCreateActionOpen(nextOpen);
@@ -605,6 +794,10 @@ export default function ProcessManagement({ processes = [], roles = [], document
                     roles={roles}
                     documents={documents}
                     actions={editingAction.phase.actions ?? []}
+                    decisionSources={getDecisionSources(
+                        editingAction.phase,
+                        editingAction.action,
+                    )}
                     actionId={editingAction.action.id}
                     open={isEditActionOpen}
                     onOpenChange={(nextOpen) => {
@@ -616,15 +809,28 @@ export default function ProcessManagement({ processes = [], roles = [], document
                     initialValues={{
                         name: editingAction.action.name,
                         description: editingAction.action.description || '',
-                        action_type: editingAction.action.action_type || 'check',
-                        requires_file: Boolean(editingAction.action.requires_file),
-                        document_ids: (editingAction.action.documents || []).map((document) => document.id),
-                        roles: (editingAction.action.roles || []).map((role) => role.id),
-                        reviewer_groups: editingAction.action.reviewer_groups ?? [],
-                        approve_action_id: editingAction.action.approve_action_id ?? null,
-                        deny_action_id: editingAction.action.deny_action_id ?? null,
-                        decision_mode: editingAction.action.decision_mode ?? 'approve_deny',
-                        custom_decision_branches: editingAction.action.custom_decision_branches ?? [],
+                        action_type:
+                            editingAction.action.action_type || 'check',
+                        requires_file: Boolean(
+                            editingAction.action.requires_file,
+                        ),
+                        document_ids: (
+                            editingAction.action.documents || []
+                        ).map((document) => document.id),
+                        roles: (editingAction.action.roles || []).map(
+                            (role) => role.id,
+                        ),
+                        reviewer_groups:
+                            editingAction.action.reviewer_groups ?? [],
+                        approve_action_id:
+                            editingAction.action.approve_action_id ?? null,
+                        deny_action_id:
+                            editingAction.action.deny_action_id ?? null,
+                        decision_mode:
+                            editingAction.action.decision_mode ??
+                            'approve_deny',
+                        custom_decision_branches:
+                            editingAction.action.custom_decision_branches ?? [],
                     }}
                     onSubmit={async (values) => {
                         await handleUpdateAction(values);
@@ -645,7 +851,9 @@ export default function ProcessManagement({ processes = [], roles = [], document
                     <DialogHeader>
                         <DialogTitle>Delete action?</DialogTitle>
                         <DialogDescription>
-                            Are you sure you want to delete "{actionToDelete?.name}"? This action cannot be undone.
+                            Are you sure you want to delete "
+                            {actionToDelete?.name}"? This action cannot be
+                            undone.
                         </DialogDescription>
                     </DialogHeader>
                     <DialogFooter>

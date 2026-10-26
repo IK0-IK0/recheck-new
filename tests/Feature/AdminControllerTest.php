@@ -11,128 +11,134 @@ use App\Http\Controllers\Admin\RoleManagementController;
 use App\Http\Controllers\Admin\UserManagementController;
 use App\Models\Permission;
 use App\Models\Role;
+use App\Models\SuperadminTenantUser;
 use App\Models\TenantUser;
+use App\Models\User;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 // ---------------------------------------------------------------------------
-// Requirement 6.5: Self-deletion returns 403
-//
-// The controller must abort 403 when the authenticated user tries to delete
-// their own account. We log the user in via Auth::loginUsingOnce() so that
-// Auth::id() returns the correct tenant-user ID.
-// ---------------------------------------------------------------------------
-test('destroy aborts 403 when admin attempts to delete their own account', function (): void {
-    $user = TenantUser::factory()->create();
+function institutionRequest(User $institution, string $uri, string $method, array $data = []): Request
+{
+    $request = Request::create($uri, $method, $data);
+    $request->setUserResolver(fn (): User => $institution);
 
-    // Log in the user so Auth::id() resolves to their ID
-    Auth::login($user);
+    return $request;
+}
 
-    $controller = new UserManagementController;
-
-    expect(fn () => $controller->destroy($user))
-        ->toThrow(HttpException::class);
-})->group('admin-users');
-
-// ---------------------------------------------------------------------------
-// Requirement 6.2: User creation hashes the password
-// ---------------------------------------------------------------------------
-test('store creates a TenantUser with a bcrypt-hashed password', function (): void {
+test('store creates a centrally authenticated tenant user with a hashed password', function (): void {
+    $institution = User::factory()->create(['role' => 'institution']);
+    $role = Role::factory()->create();
     $controller = new UserManagementController;
 
     $plainPassword = 'secret1234';
-    $request = Request::create('/users', 'POST', [
+    $request = institutionRequest($institution, '/tenant/users', 'POST', [
         'name' => 'New User',
         'email' => 'newuser@example.com',
         'password' => $plainPassword,
-        'roles' => [],
+        'role_id' => $role->id,
     ]);
 
     $controller->store($request);
 
-    $user = TenantUser::where('email', 'newuser@example.com')->firstOrFail();
+    $user = SuperadminTenantUser::where('email', 'newuser@example.com')->firstOrFail();
 
-    // The stored password must be a bcrypt hash, not the plain-text value.
     expect(Hash::check($plainPassword, $user->password))->toBeTrue();
-    expect($user->password)->not->toBe($plainPassword);
+    expect((int) $user->institution_id)->toBe((int) $institution->id);
+    expect(DB::connection('tenant')->table('role_tenant_user')
+        ->where('tenant_user_id', $user->id)
+        ->where('role_id', $role->id)
+        ->exists())->toBeTrue();
 })->group('admin-users');
 
-// ---------------------------------------------------------------------------
-// Requirement 6.2: User creation syncs roles
-// ---------------------------------------------------------------------------
-test('store syncs roles to the newly created user', function (): void {
-    $controller = new UserManagementController;
+test('store assigns the tenant default role when no role is specified', function (): void {
+    $institution = User::factory()->create(['role' => 'institution']);
+    $defaultRole = Role::factory()->create(['is_default' => true]);
 
-    $role1 = Role::factory()->create();
-    $role2 = Role::factory()->create();
+    (new UserManagementController)->store(institutionRequest($institution, '/tenant/users', 'POST', [
+        'name' => 'Default Role User',
+        'email' => 'default-role@example.com',
+        'password' => 'secret1234',
+    ]));
 
-    $request = Request::create('/users', 'POST', [
-        'name' => 'Roled User',
-        'email' => 'roled@example.com',
+    $user = SuperadminTenantUser::where('email', 'default-role@example.com')->firstOrFail();
+
+    expect(DB::connection('tenant')->table('role_tenant_user')
+        ->where('tenant_user_id', $user->id)
+        ->value('role_id'))->toBe($defaultRole->id);
+})->group('admin-users');
+
+test('update changes central user details and replaces tenant role assignments', function (): void {
+    $institution = User::factory()->create(['role' => 'institution']);
+    $user = SuperadminTenantUser::create([
+        'institution_id' => $institution->id,
+        'name' => 'Old Name',
+        'email' => 'old@example.com',
         'password' => 'password123',
-        'roles' => [$role1->id, $role2->id],
+    ]);
+    $oldRole = Role::factory()->create();
+    $newRole = Role::factory()->create();
+    DB::connection('tenant')->table('role_tenant_user')->insert([
+        'role_id' => $oldRole->id,
+        'tenant_user_id' => $user->id,
     ]);
 
-    $controller->store($request);
+    (new UserManagementController)->update(
+        institutionRequest($institution, '/tenant/users/'.$user->id, 'PUT', [
+            'name' => 'Updated Name',
+            'email' => 'updated@example.com',
+            'role_id' => $newRole->id,
+        ]),
+        $user->id
+    );
 
-    $user = TenantUser::where('email', 'roled@example.com')->firstOrFail();
-
-    expect($user->roles->pluck('id')->sort()->values()->toArray())
-        ->toBe(collect([$role1->id, $role2->id])->sort()->values()->toArray());
+    expect($user->fresh()->name)->toBe('Updated Name');
+    expect($user->fresh()->email)->toBe('updated@example.com');
+    expect(DB::connection('tenant')->table('role_tenant_user')
+        ->where('tenant_user_id', $user->id)
+        ->pluck('role_id')->all())->toBe([$newRole->id]);
 })->group('admin-users');
 
-// ---------------------------------------------------------------------------
-// Requirement 6.3: User update syncs updated name, email, and roles
-// ---------------------------------------------------------------------------
-test('update changes user name, email, and syncs roles', function (): void {
-    $controller = new UserManagementController;
-
-    $user = TenantUser::factory()->create();
-    $roleOld = Role::factory()->create();
-    $roleNew = Role::factory()->create();
-    $user->roles()->sync([$roleOld->id]);
-
-    $request = Request::create('/users/'.$user->id, 'PUT', [
-        'name' => 'Updated Name',
-        'email' => 'updated@example.com',
-        'roles' => [$roleNew->id],
+test('tenant user management is scoped to the signed-in institution', function (): void {
+    $institution = User::factory()->create(['role' => 'institution']);
+    $otherInstitution = User::factory()->create(['role' => 'institution']);
+    $user = SuperadminTenantUser::create([
+        'institution_id' => $otherInstitution->id,
+        'name' => 'Other User',
+        'email' => 'other@example.com',
+        'password' => 'password123',
     ]);
 
-    $controller->update($request, $user);
-
-    $user->refresh();
-
-    expect($user->name)->toBe('Updated Name');
-    expect($user->email)->toBe('updated@example.com');
-    expect($user->roles->pluck('id')->toArray())->toBe([$roleNew->id]);
+    expect(fn () => (new UserManagementController)->update(
+        institutionRequest($institution, '/tenant/users/'.$user->id, 'PUT', ['name' => 'Changed']),
+        $user->id
+    ))->toThrow(HttpException::class);
 })->group('admin-users');
 
-// ---------------------------------------------------------------------------
-// Requirement 6.4: User deletion detaches roles and deletes the record
-// ---------------------------------------------------------------------------
-test('destroy deletes user and detaches all role_user pivot records', function (): void {
-    $admin = TenantUser::factory()->create();
-    $target = TenantUser::factory()->create();
+test('destroy deletes the central user and tenant role assignments', function (): void {
+    $institution = User::factory()->create(['role' => 'institution']);
+    $user = SuperadminTenantUser::create([
+        'institution_id' => $institution->id,
+        'name' => 'Tenant User',
+        'email' => 'tenant@example.com',
+        'password' => 'password123',
+    ]);
     $role = Role::factory()->create();
-    $target->roles()->sync([$role->id]);
+    DB::connection('tenant')->table('role_tenant_user')->insert([
+        'role_id' => $role->id,
+        'tenant_user_id' => $user->id,
+    ]);
 
-    // Log in as a different user so the self-deletion guard is not triggered
-    Auth::login($admin);
+    (new UserManagementController)->destroy(
+        institutionRequest($institution, '/tenant/users/'.$user->id, 'DELETE'),
+        $user->id
+    );
 
-    $controller = new UserManagementController;
-    $controller->destroy($target);
-
-    expect(TenantUser::find($target->id))->toBeNull();
-
-    $pivotCount = DB::connection('tenant')
-        ->table('role_user')
-        ->where('user_id', $target->id)
-        ->count();
-
-    expect($pivotCount)->toBe(0);
+    expect(SuperadminTenantUser::find($user->id))->toBeNull();
+    expect(DB::connection('tenant')->table('role_tenant_user')
+        ->where('tenant_user_id', $user->id)->exists())->toBeFalse();
 })->group('admin-users');
 
 // ---------------------------------------------------------------------------
@@ -145,10 +151,17 @@ test('RoleManagementController index loads roles with permissions', function ():
     $perm = Permission::factory()->create();
     $role->permissions()->attach([$perm->id]);
 
-    // Verify no exception is thrown and the relationship is accessible
     $allRoles = Role::with('permissions')->get();
     expect($allRoles->firstWhere('id', $role->id)?->permissions->pluck('id')->toArray())
         ->toBe([$perm->id]);
+
+    $request = Request::create('/tenant/roles', 'GET', server: ['HTTP_X_INERTIA' => 'true']);
+    $response = $controller->index()->toResponse($request);
+    $permissionNames = collect($response->getData(true)['props']['permissions'])
+        ->pluck('name');
+
+    expect($permissionNames)
+        ->toContain('proposal.view.all', 'proposal.view.own_or_assigned');
 })->group('admin-roles');
 
 // ---------------------------------------------------------------------------
@@ -195,6 +208,17 @@ test('update changes role name and syncs permissions', function (): void {
 
     expect($role->name)->toBe('new-name');
     expect($role->permissions->pluck('id')->toArray())->toBe([$newPerm->id]);
+})->group('admin-roles');
+
+test('setting a default role clears the previous default', function (): void {
+    $oldDefault = Role::factory()->create(['is_default' => true]);
+    $newDefault = Role::factory()->create(['is_default' => false]);
+
+    $response = (new RoleManagementController)->setDefault($newDefault);
+
+    expect($oldDefault->fresh()->is_default)->toBeFalse();
+    expect($newDefault->fresh()->is_default)->toBeTrue();
+    expect($response->getStatusCode())->toBe(302);
 })->group('admin-roles');
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,81 @@
+FROM php:8.5-apache-bookworm AS php-base
+
+ENV PORT=80
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libcurl4-openssl-dev \
+        libfreetype6-dev \
+        libicu-dev \
+        libjpeg62-turbo-dev \
+        libonig-dev \
+        libpng-dev \
+        libpq-dev \
+        libzip-dev \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install -j"$(nproc)" \
+        bcmath \
+        curl \
+        exif \
+        gd \
+        intl \
+        mbstring \
+        opcache \
+        pdo_mysql \
+        pdo_pgsql \
+        pdo_sqlite \
+        zip \
+    && a2enmod rewrite \
+    && sed -ri 's!/var/www/html!/var/www/html/public!g' /etc/apache2/sites-available/000-default.conf \
+    && sed -ri 's/Listen 80/Listen ${PORT}/' /etc/apache2/ports.conf \
+    && sed -ri 's/<VirtualHost \*:80>/<VirtualHost *:${PORT}>/' /etc/apache2/sites-available/000-default.conf \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM php-base AS build
+
+COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:22-bookworm-slim /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
+
+WORKDIR /var/www/html
+
+COPY composer.json composer.lock ./
+RUN composer install \
+    --no-dev \
+    --no-interaction \
+    --no-progress \
+    --no-scripts \
+    --optimize-autoloader \
+    --prefer-dist
+
+COPY . .
+
+RUN composer dump-autoload \
+        --no-dev \
+        --classmap-authoritative \
+        --optimize \
+    && node /usr/local/lib/node_modules/npm/bin/npm-cli.js ci \
+    && node /usr/local/lib/node_modules/npm/bin/npm-cli.js run build \
+    && rm -rf node_modules
+
+FROM php-base AS runtime
+
+WORKDIR /var/www/html
+
+COPY --from=build --chown=www-data:www-data /var/www/html /var/www/html
+
+RUN mkdir -p /tmp/laravel/cache /tmp/laravel/sessions /tmp/laravel/views \
+        /tmp/laravel/logs \
+        storage/app/private storage/app/public \
+        storage/framework \
+    && rm -rf storage/framework/cache storage/framework/sessions \
+        storage/framework/views storage/logs \
+    && ln -s /tmp/laravel/cache storage/framework/cache \
+    && ln -s /tmp/laravel/sessions storage/framework/sessions \
+    && ln -s /tmp/laravel/views storage/framework/views \
+    && ln -s /tmp/laravel/logs storage/logs \
+    && chown -R www-data:www-data /tmp/laravel storage bootstrap/cache
+
+EXPOSE 80
+
+CMD ["apache2-foreground"]

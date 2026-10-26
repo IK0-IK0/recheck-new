@@ -60,6 +60,7 @@ Route::middleware(['auth', 'verified'])->group(function (): void {
         });
 
         Route::resource('users', Admin\UserManagementController::class)->only(['index', 'store', 'update', 'destroy']);
+        Route::post('/roles/{role}/default', [Admin\RoleManagementController::class, 'setDefault'])->name('tenant.roles.default');
         Route::resource('roles', Admin\RoleManagementController::class)->only(['index', 'store', 'update', 'destroy']);
     });
 });

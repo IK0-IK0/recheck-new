@@ -4,14 +4,17 @@ use App\Http\Controllers\ProposalController;
 use App\Models\Action;
 use App\Models\Document;
 use App\Models\Phase;
+use App\Models\Permission;
 use App\Models\Process;
 use App\Models\Proposal;
 use App\Models\Role;
 use App\Models\SuperadminTenantUser;
 use App\Models\User;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -25,7 +28,7 @@ function proposalRequestAsOwner(Request $request, int $ownerId = 1): Request
     return $request;
 }
 
-test('proposals are private to their owner while tracking is shared', function () {
+test('proposal visibility defaults to proposals the user owns or is assigned to', function () {
     Proposal::create([
         'title' => 'My proposal',
         'user_id' => 1,
@@ -65,11 +68,57 @@ test('proposals are private to their owner while tracking is shared', function (
         ->toBe(['My proposal'])
         ->and($indexProps['selectedProposalId'])->toBe(1)
         ->and(collect($trackingProps['proposals'])->pluck('title')->sort()->values()->all())
-        ->toBe([
-            'Another users proposal',
-            'My proposal',
-            'Tenant user with same numeric id',
+        ->toBe(['My proposal']);
+});
+
+test('proposal visibility permissions limit or expand owned and assigned proposals', function () {
+    $limitedPermission = Permission::create(['name' => 'proposal.view.own_or_assigned']);
+    $allPermission = Permission::create(['name' => 'proposal.view.all']);
+    $role = Role::create(['name' => 'Review team']);
+    $role->permissions()->attach($limitedPermission);
+
+    DB::connection('tenant')->table('role_tenant_user')->insert([
+        'role_id' => $role->id,
+        'tenant_user_id' => 7,
+    ]);
+
+    $assignedAction = Action::factory()->create(['action_type' => 'review']);
+    $unassignedAction = Action::factory()->create(['action_type' => 'review']);
+    $assignedAction->roles()->attach($role->id);
+
+    foreach ([
+        ['Owned proposal', 7, null],
+        ['Assigned proposal', 8, $assignedAction->id],
+        ['Unassigned proposal', 9, $unassignedAction->id],
+    ] as [$title, $ownerId, $actionId]) {
+        Proposal::create([
+            'title' => $title,
+            'user_id' => $ownerId,
+            'user_type' => SuperadminTenantUser::class,
+            'institution_id' => 3,
+            'current_action_id' => $actionId,
         ]);
+    }
+
+    $user = new SuperadminTenantUser;
+    $user->setAttribute($user->getKeyName(), 7);
+    $user->setAttribute('institution_id', 3);
+    $request = Request::create('/tenant/proposals', 'GET');
+    $request->setUserResolver(fn (): SuperadminTenantUser => $user);
+    $controller = app(ProposalController::class);
+
+    $limitedProps = $controller->index($request)->toResponse($request)->getData(true)['props'];
+
+    expect(collect($limitedProps['proposals'])->pluck('title')->sort()->values()->all())
+        ->toBe(['Assigned proposal', 'Owned proposal'])
+        ->and(collect($limitedProps['proposals'])->firstWhere('title', 'Assigned proposal')['can_review'])
+        ->toBeTrue();
+
+    $role->permissions()->sync([$allPermission->id]);
+    $allProps = $controller->index($request)->toResponse($request)->getData(true)['props'];
+
+    expect(collect($allProps['proposals'])->pluck('title')->sort()->values()->all())
+        ->toBe(['Assigned proposal', 'Owned proposal', 'Unassigned proposal']);
 });
 
 test('proposal details redirect into the proposals page with that proposal selected', function () {
@@ -89,14 +138,13 @@ test('proposal details redirect into the proposals page with that proposal selec
         ->toContain('/tenant/proposals?proposal='.$proposal->id);
 });
 
-test('users can create at most three proposals including completed proposals', function () {
+test('users can create at most three active proposals', function () {
     foreach (range(1, 3) as $number) {
         Proposal::create([
             'title' => 'Proposal '.$number,
             'user_id' => 1,
             'user_type' => User::class,
             'institution_id' => 1,
-            'completed_at' => $number === 1 ? now() : null,
         ]);
     }
 
@@ -107,6 +155,38 @@ test('users can create at most three proposals including completed proposals', f
     expect(fn () => app(ProposalController::class)->store($request))
         ->toThrow(ValidationException::class);
     expect(Proposal::query()->where('user_id', 1)->where('user_type', User::class)->count())
+        ->toBe(3);
+});
+
+test('archived proposals do not count toward the active proposal limit', function () {
+    Proposal::create([
+        'title' => 'Archived proposal',
+        'user_id' => 1,
+        'user_type' => User::class,
+        'institution_id' => 1,
+        'completed_at' => now(),
+    ]);
+
+    foreach (range(1, 2) as $number) {
+        Proposal::create([
+            'title' => 'Active proposal '.$number,
+            'user_id' => 1,
+            'user_type' => User::class,
+            'institution_id' => 1,
+        ]);
+    }
+
+    $request = proposalRequestAsOwner(
+        Request::create('/tenant/proposals', 'POST', ['title' => 'New active proposal']),
+    );
+
+    app(ProposalController::class)->store($request);
+
+    expect(Proposal::query()
+        ->where('user_id', 1)
+        ->where('user_type', User::class)
+        ->whereNull('completed_at')
+        ->count())
         ->toBe(3);
 });
 
@@ -156,6 +236,173 @@ test('submitting completes one configured action at a time before moving phases'
         ->and($proposal->fresh()->completed_at)->not->toBeNull()
         ->and($proposal->actionTransitions()->count())->toBe(3)
         ->and($proposal->phaseTransitions()->count())->toBe(1);
+});
+
+test('submission actions require all documents and only the outcome-specific documents that apply', function () {
+    $process = Process::factory()->create();
+    $phase = Phase::factory()->for($process)->create();
+    $sourceAction = Action::factory()->for($phase)->create([
+        'action_type' => 'review',
+        'decision_mode' => 'custom',
+        'custom_decision_branches' => [
+            ['id' => 'accepted', 'label' => 'Accepted', 'destination' => 'next'],
+            ['id' => 'revised', 'label' => 'Needs revision', 'destination' => 'next'],
+        ],
+        'order' => 1,
+    ]);
+    $olderReviewAction = Action::factory()->for($phase)->create([
+        'action_type' => 'review',
+        'decision_mode' => 'custom',
+        'custom_decision_branches' => [
+            ['id' => 'follow-up', 'label' => 'Needs follow-up', 'destination' => 'next'],
+        ],
+        'order' => 0,
+    ]);
+    $submissionAction = Action::factory()->for($phase)->create([
+        'action_type' => 'submit',
+        'order' => 2,
+    ]);
+    $allDocument = Document::factory()->create();
+    $acceptedDocument = Document::factory()->create();
+    $revisedDocument = Document::factory()->create();
+    $olderDecisionDocument = Document::factory()->create();
+    $submissionAction->update([
+        'reviewer_groups' => [[
+            'id' => 'submission',
+            'name' => 'Submission',
+            'role_ids' => [],
+            'document_ids' => [$allDocument->id],
+            'decision_document_sets' => [
+                [
+                    'action_id' => $olderReviewAction->id,
+                    'decision_id' => 'follow-up',
+                    'document_ids' => [$olderDecisionDocument->id],
+                ],
+                [
+                    'action_id' => $sourceAction->id,
+                    'decision_id' => 'accepted',
+                    'document_ids' => [$acceptedDocument->id],
+                ],
+                [
+                    'action_id' => $sourceAction->id,
+                    'decision_id' => 'revised',
+                    'document_ids' => [$revisedDocument->id],
+                ],
+            ],
+        ]],
+    ]);
+    $submissionAction->documents()->sync([
+        $allDocument->id,
+        $acceptedDocument->id,
+        $revisedDocument->id,
+        $olderDecisionDocument->id,
+    ]);
+    $proposal = Proposal::create([
+        'title' => 'Outcome-specific submission',
+        'user_id' => 1,
+        'user_type' => User::class,
+        'institution_id' => 1,
+        'process_id' => $process->id,
+        'current_phase_id' => $phase->id,
+        'current_action_id' => $submissionAction->id,
+    ]);
+    $proposal->actionTransitions()->create([
+        'action_id' => $olderReviewAction->id,
+        'decision' => 'follow-up',
+    ]);
+    $proposal->actionTransitions()->create([
+        'action_id' => $sourceAction->id,
+        'decision' => 'accepted',
+    ]);
+
+    foreach ([$allDocument, $acceptedDocument] as $document) {
+        $proposal->documents()->attach($document->id, [
+            'phase_id' => $phase->id,
+            'required_document_id' => $document->id,
+            'action_id' => $submissionAction->id,
+        ]);
+    }
+
+    $request = proposalRequestAsOwner(
+        Request::create('/tenant/proposals/'.$proposal->id.'/submit', 'POST'),
+    );
+    app(ProposalController::class)->submit($request, $proposal);
+
+    expect($proposal->fresh()->current_action_id)->toBeNull()
+        ->and($proposal->fresh()->completed_at)->not->toBeNull();
+});
+
+test('proposal uploads cannot include documents for an unmatched submission outcome', function () {
+    Storage::fake('local');
+
+    $process = Process::factory()->create();
+    $phase = Phase::factory()->for($process)->create();
+    $sourceAction = Action::factory()->for($phase)->create([
+        'action_type' => 'review',
+        'decision_mode' => 'custom',
+        'custom_decision_branches' => [
+            ['id' => 'accepted', 'label' => 'Accepted', 'destination' => 'next'],
+            ['id' => 'revised', 'label' => 'Needs revision', 'destination' => 'next'],
+        ],
+        'order' => 1,
+    ]);
+    $submissionAction = Action::factory()->for($phase)->create([
+        'action_type' => 'submit',
+        'order' => 2,
+    ]);
+    $inactiveDocument = Document::factory()->create([
+        'name' => 'Revision notes',
+        'file_type' => 'application/pdf',
+    ]);
+    $submissionAction->update([
+        'reviewer_groups' => [[
+            'id' => 'submission',
+            'name' => 'Submission',
+            'role_ids' => [],
+            'document_ids' => [],
+            'decision_document_sets' => [
+                [
+                    'action_id' => $sourceAction->id,
+                    'decision_id' => 'accepted',
+                    'document_ids' => [],
+                ],
+                [
+                    'action_id' => $sourceAction->id,
+                    'decision_id' => 'revised',
+                    'document_ids' => [$inactiveDocument->id],
+                ],
+            ],
+        ]],
+    ]);
+    $submissionAction->documents()->attach($inactiveDocument);
+    $proposal = Proposal::create([
+        'title' => 'Outcome-specific submission',
+        'user_id' => 1,
+        'user_type' => User::class,
+        'institution_id' => 1,
+        'process_id' => $process->id,
+        'current_phase_id' => $phase->id,
+        'current_action_id' => $submissionAction->id,
+    ]);
+    $proposal->actionTransitions()->create([
+        'action_id' => $sourceAction->id,
+        'decision' => 'accepted',
+    ]);
+    $request = proposalRequestAsOwner(
+        Request::create(
+            '/tenant/proposals/'.$proposal->id.'/documents',
+            'POST',
+            [
+                'phase_id' => $phase->id,
+                'required_document_id' => $inactiveDocument->id,
+            ],
+            [],
+            ['file' => UploadedFile::fake()->create('revision.pdf', 20, 'application/pdf')],
+        ),
+    );
+
+    expect(fn () => app(ProposalController::class)->storeDocument($request, $proposal))
+        ->toThrow(ValidationException::class);
 });
 
 test('review decisions follow the configured action route and are recorded', function () {
@@ -208,6 +455,154 @@ test('review decisions follow the configured action route and are recorded', fun
     expect($proposal->fresh()->current_action_id)->toBe($approvedAction->id)
         ->and($proposal->actionTransitions()->firstOrFail()->decision)->toBe('approve')
         ->and((int) $proposal->actionTransitions()->firstOrFail()->action_id)->toBe($reviewAction->id);
+});
+
+test('institution accounts can review proposals without assigned reviewer roles', function () {
+    $process = Process::factory()->create();
+    $phase = Phase::factory()->for($process)->create();
+    $reviewerRole = Role::factory()->create();
+    $reviewAction = Action::factory()->for($phase)->create([
+        'action_type' => 'review',
+        'decision_mode' => 'approve_deny',
+        'reviewer_groups' => [[
+            'id' => 'reviewer',
+            'name' => 'Reviewer',
+            'role_ids' => [$reviewerRole->id],
+            'document_ids' => [],
+        ]],
+    ]);
+    $proposal = Proposal::create([
+        'title' => 'Research proposal',
+        'user_id' => 2,
+        'user_type' => User::class,
+        'institution_id' => 1,
+        'process_id' => $process->id,
+        'current_phase_id' => $phase->id,
+        'current_action_id' => $reviewAction->id,
+    ]);
+    $request = proposalRequestAsOwner(
+        Request::create('/tenant/proposals/'.$proposal->id.'/review', 'POST', ['decision' => 'approve']),
+    );
+    $request->user()->setAttribute('role', 'institution');
+
+    app(ProposalController::class)->review($request, $proposal);
+
+    expect($proposal->fresh()->completed_at)->not->toBeNull()
+        ->and($proposal->actionTransitions()->firstOrFail()->decision)->toBe('approve')
+        ->and($proposal->actionTransitions()->firstOrFail()->user_id)->toBe(1);
+});
+
+test('tracking provides documents assigned to the current reviewer group', function () {
+    $process = Process::factory()->create();
+    $phase = Phase::factory()->for($process)->create();
+    $reviewerRole = Role::factory()->create();
+    $assignedDocument = Document::factory()->create([
+        'label' => 'doc',
+        'name' => 'Reviewer notes',
+    ]);
+    $reviewAction = Action::factory()->for($phase)->create([
+        'action_type' => 'review',
+        'decision_mode' => 'approve_deny',
+        'reviewer_groups' => [[
+            'id' => 'reviewer',
+            'name' => 'Reviewer',
+            'role_ids' => [$reviewerRole->id],
+            'document_ids' => [$assignedDocument->id],
+        ]],
+    ]);
+    DB::connection('tenant')->table('users')->insertOrIgnore([
+        'id' => 1,
+        'name' => 'Reviewer',
+        'email' => 'reviewer@example.test',
+        'password' => 'test-password',
+    ]);
+    DB::connection('tenant')->table('role_user')->insert([
+        'role_id' => $reviewerRole->id,
+        'user_id' => 1,
+    ]);
+    Proposal::create([
+        'title' => 'Research proposal',
+        'user_id' => 2,
+        'user_type' => User::class,
+        'institution_id' => 1,
+        'process_id' => $process->id,
+        'current_phase_id' => $phase->id,
+        'current_action_id' => $reviewAction->id,
+    ]);
+    $request = proposalRequestAsOwner(Request::create('/tenant/proposals?view=tracking', 'GET'));
+    $request->user()->setAttribute('role', 'reviewer');
+
+    $props = app(ProposalController::class)
+        ->index($request)
+        ->toResponse($request)
+        ->getData(true)['props'];
+
+    expect($props['proposals'][0]['can_review'])->toBeTrue()
+        ->and(collect($props['proposals'][0]['review_documents'])->pluck('id')->all())
+        ->toBe([$assignedDocument->id]);
+});
+
+test('rejection reviews persist comments for flagged proposal files', function () {
+    if (! Schema::connection('tenant')->hasColumn('proposal_action_transitions', 'rejected_documents')) {
+        Schema::connection('tenant')->table('proposal_action_transitions', function (Blueprint $table): void {
+            $table->json('rejected_documents')->nullable();
+        });
+    }
+
+    $process = Process::factory()->create();
+    $phase = Phase::factory()->for($process)->create();
+    $reviewAction = Action::factory()->for($phase)->create([
+        'action_type' => 'review',
+        'decision_mode' => 'approve_deny',
+    ]);
+    $proposal = Proposal::create([
+        'title' => 'Research proposal',
+        'user_id' => 2,
+        'user_type' => User::class,
+        'institution_id' => 1,
+        'process_id' => $process->id,
+        'current_phase_id' => $phase->id,
+        'current_action_id' => $reviewAction->id,
+    ]);
+    $file = Document::factory()->create();
+    $proposal->documents()->attach($file->id);
+    $request = proposalRequestAsOwner(
+        Request::create(
+            '/tenant/proposals/'.$proposal->id.'/review',
+            'POST',
+            [
+                'decision' => 'deny',
+                'rejected_documents' => [[
+                    'document_id' => $file->id,
+                    'comment' => 'The submitted file is incomplete.',
+                ]],
+            ],
+        ),
+    );
+    $request->user()->setAttribute('role', 'institution');
+
+    app(ProposalController::class)->review($request, $proposal);
+
+    expect($proposal->actionTransitions()->firstOrFail()->rejected_documents)
+        ->toBe([[
+            'document_id' => $file->id,
+            'comment' => 'The submitted file is incomplete.',
+        ]]);
+
+    $indexRequest = proposalRequestAsOwner(
+        Request::create('/tenant/proposals', 'GET'),
+        2,
+    );
+    $indexProps = app(ProposalController::class)
+        ->index($indexRequest)
+        ->toResponse($indexRequest)
+        ->getData(true)['props'];
+
+    expect($indexProps['proposals'][0]['action_transitions'][0]['rejected_documents'])
+        ->toBe([[
+            'document_id' => $file->id,
+            'comment' => 'The submitted file is incomplete.',
+        ]]);
 });
 
 test('uploaded proposal documents persist their required phase and document', function () {

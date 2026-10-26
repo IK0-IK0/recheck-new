@@ -321,6 +321,53 @@ test('action assignment groups persist roles and required documents', function (
         ->and($action->fresh()->documents()->pluck('documents.id')->all())->toBe([$updatedDocument->id]);
 });
 
+test('submission outcome document sets persist and join the action document requirements', function (): void {
+    $process = Process::factory()->create();
+    $phase = Phase::factory()->for($process)->create();
+    $sourceAction = Action::factory()->for($phase)->create([
+        'action_type' => 'review',
+        'decision_mode' => 'custom',
+        'custom_decision_branches' => [
+            ['id' => 'accepted', 'label' => 'Accepted', 'destination' => 'next'],
+        ],
+        'order' => 1,
+    ]);
+    $outcomeRole = Role::factory()->create();
+    $allDocument = Document::factory()->create();
+    $outcomeDocument = Document::factory()->create();
+    $reviewerGroups = [[
+        'id' => 'submission',
+        'name' => 'Submission',
+        'role_ids' => [],
+        'document_ids' => [$allDocument->id],
+        'decision_document_sets' => [[
+            'action_id' => $sourceAction->id,
+            'decision_id' => 'accepted',
+            'role_ids' => [$outcomeRole->id],
+            'document_ids' => [$outcomeDocument->id],
+        ]],
+    ]];
+
+    (new ProcessManagementController)->storeAction(
+        Request::create('/actions', 'POST', [
+            'name' => 'Submit documents',
+            'action_type' => 'submit',
+            'reviewer_groups' => $reviewerGroups,
+        ]),
+        $phase,
+    );
+
+    $submissionAction = $phase->actions()
+        ->where('name', 'Submit documents')
+        ->firstOrFail();
+
+    expect($submissionAction->reviewer_groups)->toBe($reviewerGroups)
+        ->and($submissionAction->roles()->pluck('roles.id')->all())
+        ->toBe([$outcomeRole->id])
+        ->and($submissionAction->documents()->pluck('documents.id')->sort()->values()->all())
+        ->toBe(collect([$allDocument->id, $outcomeDocument->id])->sort()->values()->all());
+});
+
 // ---------------------------------------------------------------------------
 // Property 2: Phase Reorder Consistency
 //
