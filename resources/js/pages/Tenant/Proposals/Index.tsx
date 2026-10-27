@@ -578,7 +578,7 @@ export default function Index({
                     );
                 }
 
-                router.reload({ only: ['proposals'], preserveScroll: true });
+                router.reload({ only: ['proposals'] });
                 toast.success(`${documentName} uploaded.`);
 
                 return true;
