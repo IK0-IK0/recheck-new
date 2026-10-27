@@ -105,7 +105,7 @@ return [
             'driver' => 'pgsql',
             'url' => env('VERCEL') === '1' ? env('SUPABASE_DB_URL') : env('DB_URL'),
             'host' => env('VERCEL') === '1'
-                ? env('SUPABASE_DB_HOST', 'aws-0-ap-southeast-1.pooler.supabase.com')
+                ? env('SUPABASE_DB_HOST', 'aws-0-ap-northeast-1.pooler.supabase.com')
                 : env('DB_HOST', '127.0.0.1'),
             'port' => env('VERCEL') === '1'
                 ? env('SUPABASE_DB_PORT', '6543')
@@ -114,7 +114,7 @@ return [
                 ? env('SUPABASE_DB_DATABASE', 'postgres')
                 : env('DB_DATABASE', 'laravel'),
             'username' => env('VERCEL') === '1'
-                ? env('SUPABASE_DB_USERNAME', 'postgres.nnkzmivjhxssuxpnevlz')
+                ? env('SUPABASE_DB_USERNAME', 'postgres.xwyhifrhradwufwtvsjb')
                 : env('DB_USERNAME', 'root'),
             'password' => env('VERCEL') === '1'
                 ? env('SUPABASE_DB_PASSWORD', '')
