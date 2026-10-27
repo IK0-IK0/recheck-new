@@ -35,4 +35,9 @@ return [
         ],
     ],
 
+    'initial_accounts' => [
+        'admin_password' => env('BOOTSTRAP_ADMIN_PASSWORD'),
+        'institution_password' => env('BOOTSTRAP_INSTITUTION_PASSWORD'),
+    ],
+
 ];
