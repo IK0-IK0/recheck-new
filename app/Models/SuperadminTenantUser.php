@@ -15,8 +15,6 @@ class SuperadminTenantUser extends User
 {
     protected $table = 'tenant_users';
 
-    protected $connection = 'sqlite';
-
     protected $appends = ['theme_color'];
 
     public function getInstitutionId(): ?int

@@ -242,13 +242,15 @@ export default function Welcome() {
                                     {auth.user ? 'Open dashboard' : 'Register'}
                                     <ArrowRight className="size-4 transition-transform group-hover:translate-x-1" />
                                 </Link>
-                                <Link
-                                    href={auth.user ? dashboard() : login()}
-                                    className="inline-flex h-11 items-center gap-2 rounded-[6px] border border-white/25 bg-white/5 px-5 text-[13px] font-semibold text-white transition hover:border-white/40 hover:bg-white/10 active:scale-[0.98]"
-                                >
-                                    <LogIn className="size-3.5" />
-                                    {auth.user ? 'Dashboard' : 'Login'}
-                                </Link>
+                                {!auth.user && (
+                                    <Link
+                                        href={login()}
+                                        className="inline-flex h-11 items-center gap-2 rounded-[6px] border border-white/25 bg-white/5 px-5 text-[13px] font-semibold text-white transition hover:border-white/40 hover:bg-white/10 active:scale-[0.98]"
+                                    >
+                                        <LogIn className="size-3.5" />
+                                        Login
+                                    </Link>
+                                )}
                             </div>
                         </div>
                     </section>
