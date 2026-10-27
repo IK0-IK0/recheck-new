@@ -67,7 +67,10 @@ FROM php-base AS runtime
 WORKDIR /var/www/html
 
 ENV APP_DEBUG=false \
+    DB_CONNECTION=sqlite \
+    DB_DATABASE=/tmp/laravel/data/superadmin.sqlite \
     LOG_CHANNEL=stderr \
+    TENANT_DB_DATABASE=/tmp/laravel/data/institution.sqlite \
     VIEW_COMPILED_PATH=/tmp/laravel/views
 
 COPY --from=build --chown=www-data:www-data /var/www/html /var/www/html
@@ -86,4 +89,4 @@ RUN mkdir -p /tmp/laravel/cache /tmp/laravel/sessions /tmp/laravel/views \
 
 EXPOSE 80
 
-CMD ["apache2-foreground"]
+CMD ["sh", "-c", "mkdir -p /tmp/laravel/data && touch \"$DB_DATABASE\" && chown www-data:www-data \"$DB_DATABASE\" && php artisan migrate --database=sqlite --path=database/migrations/2026_09_07_050849_create_tenant_storage_configs_table.php --force && php artisan migrate --database=sqlite --path=database/migrations/superadmin --force && exec apache2-foreground"]
