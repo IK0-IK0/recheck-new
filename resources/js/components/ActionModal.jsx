@@ -43,6 +43,7 @@ const defaultActionInitialValues = {
     custom_decision_branches: [],
     decision_branches: [],
     review_decision_document_sets: [],
+    reviewer_group_sets: [],
 };
 
 const createDecisionBranch = (type = 'custom', index = 1) => ({
@@ -66,22 +67,23 @@ const createReviewerGroup = (number = 1) => ({
 });
 
 function normalizeActionValues(actionValues = {}) {
+    const normalizeGroup = (group) => ({
+        ...group,
+        roleIds: group.roleIds ?? group.role_ids ?? [],
+        documentIds: group.documentIds ?? group.document_ids ?? [],
+        decisionDocumentSets: (
+            group.decisionDocumentSets ??
+            group.decision_document_sets ??
+            []
+        ).map((set) => ({
+            actionId: set.actionId ?? set.action_id,
+            decisionId: set.decisionId ?? set.decision_id,
+            documentIds: set.documentIds ?? set.document_ids ?? [],
+            roleIds: set.roleIds ?? set.role_ids ?? [],
+        })),
+    });
     const reviewerGroups = actionValues.reviewer_groups?.length
-        ? actionValues.reviewer_groups.map((group) => ({
-              ...group,
-              roleIds: group.roleIds ?? group.role_ids ?? [],
-              documentIds: group.documentIds ?? group.document_ids ?? [],
-              decisionDocumentSets: (
-                  group.decisionDocumentSets ??
-                  group.decision_document_sets ??
-                  []
-              ).map((set) => ({
-                  actionId: set.actionId ?? set.action_id,
-                  decisionId: set.decisionId ?? set.decision_id,
-                  documentIds: set.documentIds ?? set.document_ids ?? [],
-                  roleIds: set.roleIds ?? set.role_ids ?? [],
-              })),
-          }))
+        ? actionValues.reviewer_groups.map(normalizeGroup)
         : [
               {
                   ...createReviewerGroup(),
@@ -90,34 +92,64 @@ function normalizeActionValues(actionValues = {}) {
               },
           ];
     const mergedDecisionDocumentSets = new Map();
+    const legacyDecisionSets = [
+        ...(actionValues.review_decision_document_sets ?? []),
+        ...reviewerGroups.flatMap((group) => group.decisionDocumentSets),
+    ];
 
-    reviewerGroups
-        .flatMap((group) => group.decisionDocumentSets)
-        .forEach((set) => {
-            const key = `${set.actionId}:${set.decisionId}`;
-            const existingSet = mergedDecisionDocumentSets.get(key);
+    legacyDecisionSets.forEach((set) => {
+        const key = `${set.actionId ?? set.action_id}:${set.decisionId ?? set.decision_id}`;
+        const existingSet = mergedDecisionDocumentSets.get(key);
 
-            mergedDecisionDocumentSets.set(
-                key,
-                existingSet
-                    ? {
-                          ...existingSet,
-                          roleIds: [
-                              ...new Set([
-                                  ...existingSet.roleIds,
-                                  ...set.roleIds,
-                              ]),
-                          ],
-                          documentIds: [
-                              ...new Set([
-                                  ...existingSet.documentIds,
-                                  ...set.documentIds,
-                              ]),
-                          ],
-                      }
-                    : set,
-            );
+        mergedDecisionDocumentSets.set(key, {
+            actionId: set.actionId ?? set.action_id,
+            decisionId: set.decisionId ?? set.decision_id,
+            documentIds: [
+                ...new Set([
+                    ...(existingSet?.documentIds ?? []),
+                    ...(set.documentIds ?? set.document_ids ?? []),
+                ]),
+            ],
         });
+    });
+    const hasStoredReviewerGroupSets =
+        Array.isArray(actionValues.reviewer_group_sets) &&
+        actionValues.reviewer_group_sets.length > 0;
+    const storedReviewerGroupSets = hasStoredReviewerGroupSets
+        ? actionValues.reviewer_group_sets.map((set) => ({
+              key: set.key ?? `${set.action_id}:${set.decision_id}`,
+              actionId: set.actionId ?? set.action_id,
+              decisionId: set.decisionId ?? set.decision_id,
+              reviewerGroups: (
+                  set.reviewerGroups ??
+                  set.reviewer_groups ??
+                  []
+              ).map(normalizeGroup),
+          }))
+        : [...mergedDecisionDocumentSets.values()].map((set, setIndex) => ({
+              key: `${set.actionId}:${set.decisionId}`,
+              actionId: set.actionId,
+              decisionId: set.decisionId,
+              reviewerGroups: reviewerGroups.map((group, index) => {
+                  const groupLegacySet = group.decisionDocumentSets.find(
+                      (legacySet) =>
+                          String(legacySet.actionId) === String(set.actionId) &&
+                          legacySet.decisionId === set.decisionId,
+                  );
+
+                  return {
+                      ...group,
+                      id: `legacy-reviewer-${set.actionId}-${setIndex}-${index + 1}`,
+                      documentIds: [
+                          ...new Set([
+                              ...group.documentIds,
+                              ...(set.documentIds ?? []),
+                              ...(groupLegacySet?.documentIds ?? []),
+                          ]),
+                      ],
+                  };
+              }),
+          }));
     const normalizedReviewerGroups =
         actionValues.action_type === 'submit'
             ? [
@@ -165,15 +197,9 @@ function normalizeActionValues(actionValues = {}) {
         roles: actionValues.roles ?? [],
         document_ids: actionValues.document_ids ?? [],
         reviewer_groups: normalizedReviewerGroups,
-        review_decision_document_sets: [
-            ...(actionValues.review_decision_document_sets ??
-                [...mergedDecisionDocumentSets.values()]),
-        ].map((set) => ({
-            actionId: set.actionId ?? set.action_id,
-            decisionId: set.decisionId ?? set.decision_id,
-            documentIds: set.documentIds ?? set.document_ids ?? [],
-            roleIds: set.roleIds ?? set.role_ids ?? [],
-        })),
+        reviewer_group_sets: storedReviewerGroupSets,
+        review_decision_document_sets:
+            actionValues.review_decision_document_sets ?? [],
         decision_mode: actionValues.decision_mode ?? 'approve_deny',
         custom_decision_branches: actionValues.custom_decision_branches ?? [],
         decision_branches: [
@@ -388,25 +414,29 @@ export default function ActionModal({
     const [errors, setErrors] = useState({ name: '' });
     const [processing, setProcessing] = useState(false);
     const [activeDocumentSet, setActiveDocumentSet] = useState('all');
+    const [activeReviewerGroupSetKey, setActiveReviewerGroupSetKey] =
+        useState('all');
 
     const dialogOpen = open === undefined ? internalOpen : open;
     const setDialogOpen = onOpenChange ?? setInternalOpen;
-    const reviewDecisionDocumentSetsForAction = decisionSources.flatMap(
-        (source) =>
-            source.outcomes.map(
-                (outcome) =>
-                    values.review_decision_document_sets.find(
-                        (set) =>
-                            String(set.actionId) === String(source.id) &&
-                            set.decisionId === outcome.id,
-                    ) ?? {
-                        actionId: source.id,
-                        decisionId: outcome.id,
-                        documentIds: [],
-                        roleIds: [],
-                    },
-            ),
+    const reviewerGroupOutcomeOptions = decisionSources.flatMap((source) =>
+        source.outcomes.map((outcome) => ({
+            key: `${source.id}:${outcome.id}`,
+            actionId: source.id,
+            decisionId: outcome.id,
+            label: `${source.phaseLabel} · ${source.name} · ${outcome.label}`,
+        })),
     );
+    const savedReviewerGroupSets = values.reviewer_group_sets.filter((set) =>
+        reviewerGroupOutcomeOptions.some((option) => option.key === set.key),
+    );
+    const activeReviewerGroupSet = savedReviewerGroupSets.find(
+        (set) => set.key === activeReviewerGroupSetKey,
+    );
+    const activeReviewerGroups =
+        activeReviewerGroupSetKey === 'all' || !activeReviewerGroupSet
+            ? values.reviewer_groups
+            : activeReviewerGroupSet.reviewerGroups;
 
     const buildSubmissionGroups = (reviewerGroups) => {
         const [firstGroup] = reviewerGroups;
@@ -466,18 +496,13 @@ export default function ActionModal({
             },
         ];
     };
-    const buildReviewerGroups = (reviewerGroups) =>
-        reviewerGroups.map((group, index) => ({
-            ...group,
-            decisionDocumentSets:
-                index === 0 ? reviewDecisionDocumentSetsForAction : [],
-        }));
     const reviewerGroupsForAction =
         values.action_type === 'submit'
             ? buildSubmissionGroups(values.reviewer_groups)
-            : buildReviewerGroups(values.reviewer_groups);
+            : activeReviewerGroups;
     const activeDocumentSetExists =
         activeDocumentSet === 'all' ||
+        values.action_type !== 'submit' ||
         reviewerGroupsForAction[0]?.decisionDocumentSets.some(
             (set) => `${set.actionId}:${set.decisionId}` === activeDocumentSet,
         );
@@ -493,6 +518,7 @@ export default function ActionModal({
         setValues(normalizeActionValues(initialValues));
         setErrors({ name: '' });
         setActiveDocumentSet('all');
+        setActiveReviewerGroupSetKey('all');
     }, [dialogOpen]);
 
     const handleSubmit = async (event) => {
@@ -543,18 +569,35 @@ export default function ActionModal({
             const submissionGroups = reviewerGroupsForAction;
             const decisionDocumentSets =
                 values.action_type === 'submit'
-                    ? submissionGroups.flatMap((group) => group.decisionDocumentSets)
-                    : reviewDecisionDocumentSetsForAction;
+                    ? submissionGroups.flatMap(
+                          (group) => group.decisionDocumentSets,
+                      )
+                    : [];
+            const configuredReviewerGroups =
+                values.action_type === 'review'
+                    ? [
+                          ...values.reviewer_groups,
+                          ...savedReviewerGroupSets.flatMap(
+                              (set) => set.reviewerGroups,
+                          ),
+                      ]
+                    : submissionGroups;
             const roleIds = [
                 ...new Set([
-                    ...submissionGroups.flatMap((group) => group.roleIds),
+                    ...configuredReviewerGroups.flatMap(
+                        (group) => group.roleIds,
+                    ),
                     ...decisionDocumentSets.flatMap((set) => set.roleIds),
                 ]),
             ];
-            const decisionDocumentIds = decisionDocumentSets.flatMap((set) => set.documentIds);
+            const decisionDocumentIds = decisionDocumentSets.flatMap(
+                (set) => set.documentIds,
+            );
             const documentIds = [
                 ...new Set([
-                    ...submissionGroups.flatMap((group) => group.documentIds),
+                    ...configuredReviewerGroups.flatMap(
+                        (group) => group.documentIds,
+                    ),
                     ...decisionDocumentIds,
                 ]),
             ];
@@ -569,34 +612,44 @@ export default function ActionModal({
                     destination,
                 }),
             );
+            const serializeGroup = (group) => ({
+                id: group.id,
+                name: group.name,
+                role_ids: group.roleIds,
+                document_ids: group.documentIds,
+            });
 
             await onSubmit?.({
                 ...rest,
                 role_ids: roleIds,
                 document_ids: documentIds,
-                reviewer_groups: submissionGroups.map((group) => ({
-                    id: group.id,
-                    name: group.name,
-                    role_ids: group.roleIds,
-                    document_ids: group.documentIds,
-                    decision_document_sets:
-                        values.action_type === 'submit'
-                            ? group.decisionDocumentSets.map((set) => ({
-                                  action_id: Number(set.actionId),
-                                  decision_id: set.decisionId,
-                                  document_ids: set.documentIds,
-                                  role_ids: set.roleIds,
-                              }))
-                            : [],
-                })),
-                review_decision_document_sets:
+                reviewer_groups:
                     values.action_type === 'review'
-                        ? reviewDecisionDocumentSetsForAction.map((set) => ({
+                        ? values.reviewer_groups.map((group) => ({
+                              ...serializeGroup(group),
+                              decision_document_sets: [],
+                          }))
+                        : submissionGroups.map((group) => ({
+                              ...serializeGroup(group),
+                              decision_document_sets:
+                                  group.decisionDocumentSets.map((set) => ({
+                                      action_id: Number(set.actionId),
+                                      decision_id: set.decisionId,
+                                      document_ids: set.documentIds,
+                                      role_ids: set.roleIds,
+                                  })),
+                          })),
+                reviewer_group_sets:
+                    values.action_type === 'review'
+                        ? savedReviewerGroupSets.map((set) => ({
+                              key: set.key,
                               action_id: Number(set.actionId),
                               decision_id: set.decisionId,
-                              document_ids: set.documentIds,
+                              reviewer_groups:
+                                  set.reviewerGroups.map(serializeGroup),
                           }))
                         : [],
+                review_decision_document_sets: [],
                 decision_mode: decisionMode,
                 approve_action_id:
                     decisionMode === 'approve_deny'
@@ -624,74 +677,112 @@ export default function ActionModal({
     };
 
     const addReviewerGroup = () => {
-        setValues({
-            ...values,
-            reviewer_groups: [
-                ...values.reviewer_groups,
-                createReviewerGroup(values.reviewer_groups.length + 1),
-            ],
-        });
+        updateActiveReviewerGroups([
+            ...reviewerGroupsForAction,
+            createReviewerGroup(reviewerGroupsForAction.length + 1),
+        ]);
+    };
+
+    const updateActiveReviewerGroups = (reviewerGroups) => {
+        if (
+            values.action_type !== 'review' ||
+            activeReviewerGroupSetKey === 'all'
+        ) {
+            setValues({ ...values, reviewer_groups: reviewerGroups });
+
+            return;
+        }
+
+        const option = reviewerGroupOutcomeOptions.find(
+            (item) => item.key === activeReviewerGroupSetKey,
+        );
+        if (!option) {
+            return;
+        }
+
+        const existingSetIndex = values.reviewer_group_sets.findIndex(
+            (set) => set.key === option.key,
+        );
+        const optionIndex = reviewerGroupOutcomeOptions.findIndex(
+            (item) => item.key === option.key,
+        );
+        const groupsForSet =
+            existingSetIndex < 0
+                ? reviewerGroups.map((group, index) => ({
+                      ...group,
+                      id: `reviewer-group-set-${option.actionId}-${optionIndex}-${Date.now()}-${index + 1}`,
+                  }))
+                : reviewerGroups;
+        const reviewerGroupSet = {
+            key: option.key,
+            actionId: option.actionId,
+            decisionId: option.decisionId,
+            reviewerGroups: groupsForSet,
+        };
+        const nextReviewerGroupSets = [...values.reviewer_group_sets];
+        if (existingSetIndex < 0) {
+            nextReviewerGroupSets.push(reviewerGroupSet);
+        } else {
+            nextReviewerGroupSets[existingSetIndex] = reviewerGroupSet;
+        }
+
+        setValues({ ...values, reviewer_group_sets: nextReviewerGroupSets });
     };
 
     const updateReviewerGroup = (groupId, updates) => {
-        setValues({
-            ...values,
-            reviewer_groups: values.reviewer_groups.map((group) =>
-                group.id === groupId ? { ...group, ...updates } : group,
-            ),
-        });
+        const sourceGroups =
+            values.action_type === 'review'
+                ? activeReviewerGroups
+                : values.reviewer_groups;
+        const nextGroups = sourceGroups.map((group) =>
+            group.id === groupId ? { ...group, ...updates } : group,
+        );
+
+        if (values.action_type === 'review') {
+            updateActiveReviewerGroups(nextGroups);
+
+            return;
+        }
+
+        setValues({ ...values, reviewer_groups: nextGroups });
     };
 
     const removeReviewerGroup = (groupId) => {
-        setValues({
-            ...values,
-            reviewer_groups: values.reviewer_groups.filter(
-                (group) => group.id !== groupId,
-            ),
-        });
+        const sourceGroups =
+            values.action_type === 'review'
+                ? activeReviewerGroups
+                : values.reviewer_groups;
+        const nextGroups = sourceGroups.filter((group) => group.id !== groupId);
+
+        if (values.action_type === 'review') {
+            updateActiveReviewerGroups(nextGroups);
+
+            return;
+        }
+
+        setValues({ ...values, reviewer_groups: nextGroups });
     };
 
-    const updateReviewDecisionSet = (setKey, update) => {
-        setValues({
-            ...values,
-            review_decision_document_sets: values.review_decision_document_sets.map(
-                (set) =>
-                    `${set.actionId}:${set.decisionId}` === setKey
-                        ? update(set)
-                        : set,
-            ),
-        });
-    };
-
-    const toggleGroupDocument = (group, documentId, sharedOutcome = false) => {
+    const toggleGroupDocument = (group, documentId) => {
         if (
-            (sharedOutcome || values.action_type === 'submit') &&
+            values.action_type === 'submit' &&
             activeDocumentSetForDisplay !== 'all'
         ) {
-            if (values.action_type === 'submit') {
-                updateReviewerGroup(group.id, {
-                    decisionDocumentSets: group.decisionDocumentSets.map((set) =>
-                        `${set.actionId}:${set.decisionId}` === activeDocumentSetForDisplay
-                            ? {
-                                  ...set,
-                                  documentIds: set.documentIds.includes(documentId)
-                                      ? set.documentIds.filter((item) => item !== documentId)
-                                      : [...set.documentIds, documentId],
-                              }
-                            : set,
-                    ),
-                });
-
-                return;
-            }
-
-            updateReviewDecisionSet(activeDocumentSetForDisplay, (set) => ({
-                ...set,
-                documentIds: set.documentIds.includes(documentId)
-                    ? set.documentIds.filter((item) => item !== documentId)
-                    : [...set.documentIds, documentId],
-            }));
-
+            updateReviewerGroup(group.id, {
+                decisionDocumentSets: group.decisionDocumentSets.map((set) =>
+                    `${set.actionId}:${set.decisionId}` ===
+                    activeDocumentSetForDisplay
+                        ? {
+                              ...set,
+                              documentIds: set.documentIds.includes(documentId)
+                                  ? set.documentIds.filter(
+                                        (item) => item !== documentId,
+                                    )
+                                  : [...set.documentIds, documentId],
+                          }
+                        : set,
+                ),
+            });
             return;
         }
 
@@ -728,11 +819,8 @@ export default function ActionModal({
         updateDecisionSetRole(group, roleId);
     };
 
-    const clearActiveDocumentSet = (group, sharedOutcome = false) => {
-        if (
-            (!sharedOutcome && values.action_type !== 'submit') ||
-            activeDocumentSetForDisplay === 'all'
-        ) {
+    const clearActiveDocumentSet = (group) => {
+        if (activeDocumentSetForDisplay === 'all') {
             updateReviewerGroup(group.id, {
                 ...(values.action_type === 'submit' ? { roleIds: [] } : {}),
                 documentIds: [],
@@ -744,7 +832,8 @@ export default function ActionModal({
         if (values.action_type === 'submit') {
             updateReviewerGroup(group.id, {
                 decisionDocumentSets: group.decisionDocumentSets.map((set) =>
-                    `${set.actionId}:${set.decisionId}` === activeDocumentSetForDisplay
+                    `${set.actionId}:${set.decisionId}` ===
+                    activeDocumentSetForDisplay
                         ? { ...set, roleIds: [], documentIds: [] }
                         : set,
                 ),
@@ -752,39 +841,32 @@ export default function ActionModal({
 
             return;
         }
-
-        updateReviewDecisionSet(activeDocumentSetForDisplay, (set) => ({
-            ...set,
-            roleIds: [],
-            documentIds: [],
-        }));
     };
 
     const hasConfiguredOutcomeSets = (group) =>
-        (values.action_type === 'review'
-            ? reviewDecisionDocumentSetsForAction
-            : group.decisionDocumentSets).some(
+        group.decisionDocumentSets.some(
             (set) => set.roleIds.length > 0 || set.documentIds.length > 0,
         );
 
     const isCurrentDocumentSetEmpty = (group, index) => {
-        if (
-            activeDocumentSetForDisplay === 'all' ||
-            (values.action_type === 'review' && index > 0)
-        ) {
-            return group.documentIds.length === 0 &&
-                (values.action_type !== 'submit' || group.roleIds.length === 0);
+        if (activeDocumentSetForDisplay === 'all') {
+            return (
+                group.documentIds.length === 0 &&
+                (values.action_type !== 'submit' || group.roleIds.length === 0)
+            );
         }
 
-        const sets = values.action_type === 'review'
-            ? reviewDecisionDocumentSetsForAction
-            : group.decisionDocumentSets;
-        const currentSet = sets.find(
-            (set) => `${set.actionId}:${set.decisionId}` === activeDocumentSetForDisplay,
+        const currentSet = group.decisionDocumentSets.find(
+            (set) =>
+                `${set.actionId}:${set.decisionId}` ===
+                activeDocumentSetForDisplay,
         );
 
-        return !currentSet ||
-            (currentSet.roleIds.length === 0 && currentSet.documentIds.length === 0);
+        return (
+            !currentSet ||
+            (currentSet.roleIds.length === 0 &&
+                currentSet.documentIds.length === 0)
+        );
     };
 
     const updateDecisionBranch = (branchId, updates) => {
@@ -1266,55 +1348,116 @@ export default function ActionModal({
                                     {values.action_type !== 'submit' ? (
                                         <>
                                             <p className="mt-1.5 text-sm text-muted-foreground">
-                                                Choose who reviews this action and
-                                                which documents they need.
+                                                Choose who reviews this action
+                                                and which documents they need.
                                             </p>
                                             {values.action_type === 'review' ? (
                                                 <p className="mt-1.5 text-xs text-muted-foreground">
-                                                    The role in the first assignment is the main reviewer role. Its members assign additional reviewers from Tracking.
+                                                    The role in the first
+                                                    assignment is the main
+                                                    reviewer role. Its members
+                                                    assign additional reviewers
+                                                    from Tracking.
                                                 </p>
                                             ) : null}
                                         </>
                                     ) : null}
                                 </div>
                                 {values.action_type !== 'submit' ? (
-                                    <Button
-                                        type="button"
-                                        variant="secondary"
-                                        size="sm"
-                                        className="shrink-0"
-                                        onClick={addReviewerGroup}
-                                        aria-label="Add reviewer group"
-                                        title="Add reviewer group"
-                                    >
-                                        <Plus className="size-4" />
-                                        Add reviewer group
-                                    </Button>
+                                    <div className="flex flex-wrap items-center justify-end gap-2">
+                                        {decisionSources.length > 0 ? (
+                                            <Select
+                                                value={
+                                                    activeReviewerGroupSetKey
+                                                }
+                                                onValueChange={
+                                                    setActiveReviewerGroupSetKey
+                                                }
+                                            >
+                                                <SelectTrigger
+                                                    aria-label="Reviewer group outcome set"
+                                                    className="h-9 w-full sm:w-72"
+                                                >
+                                                    <SelectValue placeholder="Choose reviewer group set" />
+                                                </SelectTrigger>
+                                                <SelectContent className="custom-scrollbar max-h-56">
+                                                    <SelectItem value="all">
+                                                        All (fallback)
+                                                    </SelectItem>
+                                                    {reviewerGroupOutcomeOptions.map(
+                                                        (option) => (
+                                                            <SelectItem
+                                                                key={option.key}
+                                                                value={
+                                                                    option.key
+                                                                }
+                                                            >
+                                                                {option.label}
+                                                                {!savedReviewerGroupSets.some(
+                                                                    (set) =>
+                                                                        set.key ===
+                                                                        option.key,
+                                                                )
+                                                                    ? ' · uses All'
+                                                                    : ''}
+                                                            </SelectItem>
+                                                        ),
+                                                    )}
+                                                </SelectContent>
+                                            </Select>
+                                        ) : null}
+                                        <Button
+                                            type="button"
+                                            variant="secondary"
+                                            size="sm"
+                                            className="shrink-0"
+                                            onClick={addReviewerGroup}
+                                            aria-label="Add reviewer group"
+                                            title="Add reviewer group"
+                                        >
+                                            <Plus className="size-4" />
+                                            Add reviewer group
+                                        </Button>
+                                    </div>
                                 ) : null}
                             </div>
-                            {values.reviewer_groups.length ? (
+                            {values.action_type === 'review' &&
+                            activeReviewerGroupSetKey !== 'all' &&
+                            !activeReviewerGroupSet ? (
+                                <p className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
+                                    This outcome is using the All reviewer
+                                    groups until you customize it. Changes here
+                                    will be saved for this outcome only.
+                                </p>
+                            ) : null}
+                            {reviewerGroupsForAction.length ? (
                                 <div className="grid gap-4">
                                     {reviewerGroupsForAction.map(
                                         (group, index) => (
                                             <div
                                                 key={group.id}
                                                 className={`grid gap-4 rounded-xl border bg-background p-4 sm:p-5 ${
-                                                    values.action_type === 'review' && index === 0
+                                                    values.action_type ===
+                                                        'review' && index === 0
                                                         ? 'border-primary ring-2 ring-primary/20'
                                                         : 'border-border'
                                                 }`}
                                             >
-                                                {values.action_type === 'review' && index === 0 ? (
+                                                {values.action_type ===
+                                                    'review' && index === 0 ? (
                                                     <p className="w-fit rounded-full border border-primary/40 px-2.5 py-1 text-xs font-semibold text-primary">
                                                         Main reviewer role
                                                     </p>
                                                 ) : null}
                                                 <div
                                                     className={
-                                                        values.action_type === 'submit' ||
-                                                        (values.action_type === 'review' &&
+                                                        values.action_type ===
+                                                            'submit' ||
+                                                        (values.action_type ===
+                                                            'review' &&
                                                             index === 0 &&
-                                                            decisionSources.length > 0)
+                                                            decisionSources.length >
+                                                                0)
                                                             ? 'grid grid-cols-[minmax(0,1fr)_minmax(8rem,14rem)] items-center gap-3'
                                                             : 'flex items-center gap-3'
                                                     }
@@ -1334,10 +1477,8 @@ export default function ActionModal({
                                                         aria-label={`Assignment ${index + 1} name`}
                                                         className="h-9"
                                                     />
-                                                    {values.action_type === 'submit' ||
-                                                    (values.action_type === 'review' &&
-                                                        index === 0 &&
-                                                        decisionSources.length > 0) ? (
+                                                    {values.action_type ===
+                                                    'submit' ? (
                                                         <Select
                                                             value={
                                                                 activeDocumentSetForDisplay
@@ -1347,16 +1488,10 @@ export default function ActionModal({
                                                             }
                                                         >
                                                             <SelectTrigger
-                                                                aria-label={values.action_type === 'submit'
-                                                                    ? 'Submission assignment set'
-                                                                    : 'Reviewer document outcome'}
+                                                                aria-label="Submission assignment set"
                                                                 className="h-9 w-full"
                                                             >
-                                                                <SelectValue
-                                                                    placeholder={values.action_type === 'review'
-                                                                        ? 'Shared reviewer outcomes'
-                                                                        : 'Choose document and outcome set'}
-                                                                />
+                                                                <SelectValue placeholder="Choose document and outcome set" />
                                                             </SelectTrigger>
                                                             <SelectContent className="custom-scrollbar max-h-48">
                                                                 <SelectItem value="all">
@@ -1476,13 +1611,15 @@ export default function ActionModal({
                                                         </Button>
                                                     ) : null}
                                                 </div>
-                                                {values.action_type === 'submit' || values.action_type === 'review' ? (
+                                                {values.action_type ===
+                                                    'submit' ||
+                                                values.action_type ===
+                                                    'review' ? (
                                                     <div className="grid gap-4">
                                                         <div className="flex items-center justify-between gap-3">
                                                             <Label>
-                                                                {values.action_type === 'review' && index === 0 && activeDocumentSetForDisplay !== 'all'
-                                                                    ? 'Outcome documents shared with all reviewer groups'
-                                                                    : 'Required documents'}
+                                                                Required
+                                                                documents
                                                             </Label>
                                                             <Button
                                                                 type="button"
@@ -1492,10 +1629,12 @@ export default function ActionModal({
                                                                 onClick={() =>
                                                                     clearActiveDocumentSet(
                                                                         group,
-                                                                        values.action_type === 'review' && index === 0,
                                                                     )
                                                                 }
-                                                                disabled={isCurrentDocumentSetEmpty(group, index)}
+                                                                disabled={isCurrentDocumentSetEmpty(
+                                                                    group,
+                                                                    index,
+                                                                )}
                                                             >
                                                                 <Trash2 className="size-3.5" />
                                                                 Clear current
@@ -1583,8 +1722,10 @@ export default function ActionModal({
                                                             label="Documents for this group"
                                                             items={documents}
                                                             selectedIds={
-                                                                activeDocumentSetForDisplay !== 'all' &&
-                                                                (values.action_type !== 'review' || index === 0)
+                                                                values.action_type ===
+                                                                    'submit' &&
+                                                                activeDocumentSetForDisplay !==
+                                                                    'all'
                                                                     ? (group.decisionDocumentSets.find(
                                                                           (
                                                                               set,
@@ -1602,7 +1743,6 @@ export default function ActionModal({
                                                                 toggleGroupDocument(
                                                                     group,
                                                                     documentId,
-                                                                    values.action_type === 'review' && index === 0,
                                                                 )
                                                             }
                                                             placeholder={

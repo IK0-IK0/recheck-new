@@ -96,8 +96,12 @@ class ProposalController extends Controller
         $proposals = $proposalsQuery->latest()->get();
         $proposals->each(function (Proposal $proposal) use ($request, $reviewAssignments): void {
             $currentAction = $proposal->currentAction;
+            $reviewerGroupSet = $currentAction?->action_type === 'review'
+                ? $this->effectiveReviewerGroupSet($proposal, $currentAction)
+                : ['key' => 'all', 'reviewer_groups' => []];
+            $reviewerGroupSetKey = $reviewerGroupSet['key'];
             $isMainReviewer = $currentAction?->action_type === 'review'
-                && $this->isMainReviewer($request, $currentAction);
+                && $this->isMainReviewer($request, $currentAction, $proposal);
             $reviewRound = $currentAction?->action_type === 'review'
                 ? $this->currentReviewRound($proposal, $currentAction)
                 : null;
@@ -107,6 +111,7 @@ class ProposalController extends Controller
                     ->where('proposal_id', $proposal->id)
                     ->where('action_id', $currentAction->id)
                     ->where('round', $reviewRound)
+                    ->where('reviewer_group_set_key', $reviewerGroupSetKey)
                     ->orderBy('id')
                     ->get();
             $currentIdentity = $reviewAssignments->identity($request);
@@ -114,24 +119,26 @@ class ProposalController extends Controller
                 fn (ProposalActionReviewer $reviewer): bool => (int) $reviewer->user_id === $currentIdentity['user_id']
                     && $reviewer->user_type === $currentIdentity['user_type'],
             );
-            $reviewGroups = collect($currentAction?->reviewer_groups ?? []);
+            $reviewGroups = collect($reviewerGroupSet['reviewer_groups']);
             $subReviewerGroups = $reviewGroups->skip(1)->values();
             $hasMainReviewerRole = $currentAction !== null
-                && $this->mainReviewerRoleId($currentAction) !== null;
+                && $this->mainReviewerRoleId($currentAction, $proposal) !== null;
             $canReview = $currentAction?->action_type === 'review'
                 && ($hasMainReviewerRole
                     ? $isMainReviewer || $currentAssignment !== null
-                    : $this->userCanReviewAction($request, $currentAction));
+                    : $this->userCanReviewAction($request, $currentAction, $proposal));
             $reviewerGroups = $subReviewerGroups->map(function (array $group) use (
                 $isMainReviewer,
                 $reviewAssignments,
                 $request,
                 $reviewerAssignments,
+                $reviewerGroupSetKey,
             ): array {
                 $roleId = isset($group['role_ids'][0]) ? (int) $group['role_ids'][0] : null;
                 $groupId = (string) ($group['id'] ?? '');
                 $assignment = $reviewerAssignments->first(
-                    fn (ProposalActionReviewer $reviewer): bool => $reviewer->reviewer_group_id === $groupId,
+                    fn (ProposalActionReviewer $reviewer): bool => $reviewer->reviewer_group_id === $groupId
+                        && $reviewer->reviewer_group_set_key === $reviewerGroupSetKey,
                 );
                 $candidates = $isMainReviewer && $roleId !== null
                     ? $reviewAssignments->usersForRoles($request, [$roleId])
@@ -177,6 +184,7 @@ class ProposalController extends Controller
                 'is_main_reviewer',
                 $isMainReviewer,
             );
+            $proposal->setAttribute('review_reviewer_group_set_key', $reviewerGroupSetKey);
             $proposal->setAttribute('requires_additional_reviewers', $reviewGroups->count() > 1);
             $proposal->setAttribute(
                 'is_additional_reviewer',
@@ -293,8 +301,13 @@ class ProposalController extends Controller
             ->all();
         $reviewerGroupActionIds = Action::query()
             ->where('action_type', 'review')
-            ->get(['id', 'reviewer_groups'])
-            ->filter(fn (Action $action): bool => collect($action->reviewer_groups ?? [])
+            ->get(['id', 'reviewer_groups', 'reviewer_group_sets'])
+            ->filter(fn (Action $action): bool => collect([
+                ...($action->reviewer_groups ?? []),
+                ...collect($action->reviewer_group_sets ?? [])
+                    ->flatMap(fn (array $set): array => $set['reviewer_groups'] ?? [])
+                    ->all(),
+            ])
                 ->contains(fn (array $group): bool => array_intersect(
                     array_map('intval', $group['role_ids'] ?? []),
                     $roleIds,
@@ -388,7 +401,7 @@ class ProposalController extends Controller
 
         abort_unless(
             $proposal->currentAction?->action_type === 'review'
-                && $this->userCanReviewAction($request, $proposal->currentAction),
+                && $this->userCanReviewAction($request, $proposal->currentAction, $proposal),
             403,
         );
 
@@ -882,7 +895,8 @@ class ProposalController extends Controller
                 ->find($proposal->current_action_id);
             $hasOutcomeSpecificRequirements = ! empty($currentAction?->review_decision_document_sets)
                 || collect($currentAction?->reviewer_groups ?? [])
-                    ->contains(fn (array $group): bool => ! empty($group['decision_document_sets']));
+                    ->contains(fn (array $group): bool => ! empty($group['decision_document_sets']))
+                || ! empty($currentAction?->reviewer_group_sets);
 
             if (
                 $currentAction
@@ -907,45 +921,66 @@ class ProposalController extends Controller
      */
     private function requiredDocumentIdsForAction(Proposal $proposal, Action $action): array
     {
-        $reviewerGroups = collect($action->reviewer_groups ?? []);
-        $decisionDocumentSets = collect($action->review_decision_document_sets ?? [])
-            ->whenEmpty(fn ($sets) => $reviewerGroups
+        $effectiveGroups = collect($this->effectiveReviewerGroupSet($proposal, $action)['reviewer_groups']);
+        $allConfiguredGroups = collect($action->reviewer_groups ?? [])
+            ->concat(collect($action->reviewer_group_sets ?? [])
+                ->flatMap(fn (array $set): array => $set['reviewer_groups'] ?? []));
+        $legacyDecisionSets = collect($action->review_decision_document_sets ?? [])
+            ->whenEmpty(fn ($sets) => collect($action->reviewer_groups ?? [])
                 ->flatMap(fn (array $group): array => $group['decision_document_sets'] ?? []));
-
-        if ($decisionDocumentSets->isEmpty()) {
-            return $action->documents
-                ->pluck('id')
-                ->map(fn ($id): int => (int) $id)
-                ->all();
-        }
-
-        $documentIds = $reviewerGroups
+        $configuredGroupDocumentIds = $allConfiguredGroups
             ->flatMap(fn (array $group): array => $group['document_ids'] ?? [])
             ->map(fn ($id): int => (int) $id)
             ->all();
+        $legacyDocumentIds = $legacyDecisionSets
+            ->flatMap(fn (array $set): array => $set['document_ids'] ?? [])
+            ->map(fn ($id): int => (int) $id)
+            ->all();
+        $directDocumentIds = $action->documents()
+            ->pluck('documents.id')
+            ->map(fn ($id): int => (int) $id)
+            ->diff([...$configuredGroupDocumentIds, ...$legacyDocumentIds])
+            ->all();
+        $activeGroupDocumentIds = $effectiveGroups
+            ->flatMap(fn (array $group): array => $group['document_ids'] ?? [])
+            ->map(fn ($id): int => (int) $id)
+            ->all();
+
+        return array_values(array_unique([
+            ...$directDocumentIds,
+            ...$activeGroupDocumentIds,
+            ...$this->matchingLegacyOutcomeDocumentIds($proposal, $action),
+        ]));
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function matchingLegacyOutcomeDocumentIds(Proposal $proposal, Action $action): array
+    {
         $mostRecentDecision = $proposal->actionTransitions()
             ->whereNotNull('decision')
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->first(['action_id', 'decision']);
 
-        foreach ($decisionDocumentSets as $set) {
-            $sourceActionId = (int) ($set['action_id'] ?? 0);
-
-            if (
-                $mostRecentDecision
-                && $sourceActionId !== 0
-                && (int) $mostRecentDecision->action_id === $sourceActionId
-                && (string) $mostRecentDecision->decision === (string) ($set['decision_id'] ?? '')
-            ) {
-                $documentIds = [
-                    ...$documentIds,
-                    ...array_map('intval', $set['document_ids'] ?? []),
-                ];
-            }
+        if ($mostRecentDecision === null) {
+            return [];
         }
 
-        return array_values(array_unique($documentIds));
+        $reviewerGroups = collect($action->reviewer_groups ?? []);
+        $decisionDocumentSets = collect($action->review_decision_document_sets ?? [])
+            ->whenEmpty(fn ($sets) => $reviewerGroups
+                ->flatMap(fn (array $group): array => $group['decision_document_sets'] ?? []));
+
+        return $decisionDocumentSets
+            ->filter(fn (array $set): bool => (int) ($set['action_id'] ?? 0) === (int) $mostRecentDecision->action_id
+                && (string) ($set['decision_id'] ?? '') === (string) $mostRecentDecision->decision)
+            ->flatMap(fn (array $set): array => $set['document_ids'] ?? [])
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
     }
 
     private function findProposalDocumentForReplacement(
@@ -1051,14 +1086,18 @@ class ProposalController extends Controller
 
         $action = Action::query()->find($proposal->current_action_id);
         abort_unless($action?->action_type === 'review', 409);
-        abort_unless($this->isMainReviewer($request, $action), 403);
+        abort_unless($this->isMainReviewer($request, $action, $proposal), 403);
 
         $validated = $request->validate([
+            'reviewer_group_set_key' => ['required', 'string', 'max:255'],
             'assignments' => ['required', 'array', 'min:1', 'max:20'],
             'assignments.*.reviewer_group_id' => ['required', 'string', 'distinct'],
             'assignments.*.reviewer' => ['required', 'string'],
         ]);
-        $subReviewerGroups = collect($action->reviewer_groups ?? [])->skip(1)->values();
+        $reviewerGroupSet = $this->effectiveReviewerGroupSet($proposal, $action);
+        abort_unless($validated['reviewer_group_set_key'] === $reviewerGroupSet['key'], 409);
+        $reviewerGroupSetKey = $reviewerGroupSet['key'];
+        $subReviewerGroups = collect($reviewerGroupSet['reviewer_groups'])->skip(1)->values();
         abort_unless($subReviewerGroups->isNotEmpty(), 409);
         $assignments = collect($validated['assignments']);
         $submittedGroupIds = $assignments->pluck('reviewer_group_id')->sort()->values()->all();
@@ -1103,7 +1142,7 @@ class ProposalController extends Controller
             ];
         }
 
-        DB::connection('tenant')->transaction(function () use ($request, $proposal, $action, $validatedAssignments, $mainReviewer): void {
+        DB::connection('tenant')->transaction(function () use ($request, $proposal, $action, $reviewerGroupSetKey, $validatedAssignments, $mainReviewer): void {
             $lockedProposal = Proposal::query()
                 ->whereKey($proposal->id)
                 ->lockForUpdate()
@@ -1115,13 +1154,18 @@ class ProposalController extends Controller
                 ]);
             }
 
-            abort_unless($this->isMainReviewer($request, $action), 403);
+            abort_unless($this->isMainReviewer($request, $action, $lockedProposal), 403);
+            abort_unless(
+                $this->effectiveReviewerGroupSet($lockedProposal, $action)['key'] === $reviewerGroupSetKey,
+                409,
+            );
 
             $round = $this->currentReviewRound($lockedProposal, $action);
             $existingReviewers = ProposalActionReviewer::query()
                 ->where('proposal_id', $lockedProposal->id)
                 ->where('action_id', $action->id)
                 ->where('round', $round)
+                ->where('reviewer_group_set_key', $reviewerGroupSetKey)
                 ->lockForUpdate()
                 ->get();
 
@@ -1135,6 +1179,7 @@ class ProposalController extends Controller
                 ->where('proposal_id', $lockedProposal->id)
                 ->where('action_id', $action->id)
                 ->where('round', $round)
+                ->where('reviewer_group_set_key', $reviewerGroupSetKey)
                 ->delete();
 
             foreach ($validatedAssignments as $assignment) {
@@ -1142,6 +1187,7 @@ class ProposalController extends Controller
                     'proposal_id' => $lockedProposal->id,
                     'action_id' => $action->id,
                     'round' => $round,
+                    'reviewer_group_set_key' => $reviewerGroupSetKey,
                     'reviewer_group_id' => $assignment['reviewer_group_id'],
                     'user_id' => $assignment['user_id'],
                     'user_type' => $assignment['user_type'],
@@ -1184,10 +1230,12 @@ class ProposalController extends Controller
             }
 
             $round = $this->currentReviewRound($lockedProposal, $action);
+            $reviewerGroupSetKey = $this->effectiveReviewerGroupSet($lockedProposal, $action)['key'];
             $reviewer = ProposalActionReviewer::query()
                 ->where('proposal_id', $lockedProposal->id)
                 ->where('action_id', $action->id)
                 ->where('round', $round)
+                ->where('reviewer_group_set_key', $reviewerGroupSetKey)
                 ->where('user_id', $identity['user_id'])
                 ->where('user_type', $identity['user_type'])
                 ->lockForUpdate()
@@ -1225,15 +1273,17 @@ class ProposalController extends Controller
         $action = Action::query()->find($proposal->current_action_id);
 
         abort_unless($action && $action->action_type === 'review', 409);
-        $hasMainReviewerRole = $this->mainReviewerRoleId($action) !== null;
+        $reviewerGroupSet = $this->effectiveReviewerGroupSet($proposal, $action);
+        $reviewerGroupSetKey = $reviewerGroupSet['key'];
+        $hasMainReviewerRole = $this->mainReviewerRoleId($action, $proposal) !== null;
         abort_unless(
             $hasMainReviewerRole
-                ? $this->isMainReviewer($request, $action)
-                : $this->userCanReviewAction($request, $action),
+                ? $this->isMainReviewer($request, $action, $proposal)
+                : $this->userCanReviewAction($request, $action, $proposal),
             403,
         );
 
-        $requiredReviewerGroupIds = $this->subReviewerGroupIds($action);
+        $requiredReviewerGroupIds = $this->subReviewerGroupIds($action, $proposal);
 
         if ($requiredReviewerGroupIds !== []) {
             $reviewRound = $this->currentReviewRound($proposal, $action);
@@ -1241,6 +1291,7 @@ class ProposalController extends Controller
                 ->where('proposal_id', $proposal->id)
                 ->where('action_id', $action->id)
                 ->where('round', $reviewRound)
+                ->where('reviewer_group_set_key', $reviewerGroupSetKey)
                 ->whereIn('reviewer_group_id', $requiredReviewerGroupIds);
             $assignedGroupIds = (clone $reviewers)->distinct()->pluck('reviewer_group_id')->all();
 
@@ -1305,9 +1356,11 @@ class ProposalController extends Controller
             }
 
             if ($action->action_type === 'review') {
-                $requiredReviewerGroupIds = $this->subReviewerGroupIds($action);
+                $reviewerGroupSet = $this->effectiveReviewerGroupSet($lockedProposal, $action);
+                $reviewerGroupSetKey = $reviewerGroupSet['key'];
+                $requiredReviewerGroupIds = $this->subReviewerGroupIds($action, $lockedProposal);
                 if ($requiredReviewerGroupIds !== []) {
-                    if (! $this->isMainReviewer($request, $action)) {
+                    if (! $this->isMainReviewer($request, $action, $lockedProposal)) {
                         return ['error' => 'Only the main reviewer can submit this decision.'];
                     }
 
@@ -1316,6 +1369,7 @@ class ProposalController extends Controller
                         ->where('proposal_id', $lockedProposal->id)
                         ->where('action_id', $action->id)
                         ->where('round', $round)
+                        ->where('reviewer_group_set_key', $reviewerGroupSetKey)
                         ->whereIn('reviewer_group_id', $requiredReviewerGroupIds);
                     $assignedGroupIds = (clone $reviewers)->distinct()->pluck('reviewer_group_id')->all();
                     if (array_diff($requiredReviewerGroupIds, $assignedGroupIds) !== []) {
@@ -1325,7 +1379,7 @@ class ProposalController extends Controller
                     if ((clone $reviewers)->whereNull('responded_at')->exists()) {
                         return ['error' => 'Wait until every assigned reviewer has submitted a recommendation.'];
                     }
-                } elseif (! $this->userCanReviewAction($request, $action)) {
+                } elseif (! $this->userCanReviewAction($request, $action, $lockedProposal)) {
                     return ['error' => 'You are not assigned to review this action.'];
                 }
             }
@@ -1557,9 +1611,43 @@ class ProposalController extends Controller
         return in_array($decision, ['approve', 'deny'], true);
     }
 
-    private function mainReviewerRoleId(Action $action): ?int
+    /**
+     * @return array{key: string, reviewer_groups: array<int, array<string, mixed>>}
+     */
+    private function effectiveReviewerGroupSet(Proposal $proposal, Action $action): array
     {
-        $roleId = collect($action->reviewer_groups ?? [])
+        $mostRecentDecision = $proposal->actionTransitions()
+            ->whereNotNull('decision')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->first(['action_id', 'decision']);
+
+        if ($mostRecentDecision !== null) {
+            $key = (int) $mostRecentDecision->action_id.':'.(string) $mostRecentDecision->decision;
+            $matchingSet = collect($action->reviewer_group_sets ?? [])
+                ->first(fn (array $set): bool => (int) ($set['action_id'] ?? 0) === (int) $mostRecentDecision->action_id
+                    && (string) ($set['decision_id'] ?? '') === (string) $mostRecentDecision->decision);
+
+            if ($matchingSet !== null) {
+                return [
+                    'key' => $key,
+                    'reviewer_groups' => $matchingSet['reviewer_groups'] ?? [],
+                ];
+            }
+        }
+
+        return [
+            'key' => 'all',
+            'reviewer_groups' => $action->reviewer_groups ?? [],
+        ];
+    }
+
+    private function mainReviewerRoleId(Action $action, ?Proposal $proposal = null): ?int
+    {
+        $reviewerGroups = $proposal === null
+            ? $action->reviewer_groups ?? []
+            : $this->effectiveReviewerGroupSet($proposal, $action)['reviewer_groups'];
+        $roleId = collect($reviewerGroups)
             ->first()['role_ids'][0] ?? null;
 
         return is_numeric($roleId) ? (int) $roleId : null;
@@ -1568,9 +1656,13 @@ class ProposalController extends Controller
     /**
      * @return list<string>
      */
-    private function subReviewerGroupIds(Action $action): array
+    private function subReviewerGroupIds(Action $action, ?Proposal $proposal = null): array
     {
-        return collect($action->reviewer_groups ?? [])
+        $reviewerGroups = $proposal === null
+            ? $action->reviewer_groups ?? []
+            : $this->effectiveReviewerGroupSet($proposal, $action)['reviewer_groups'];
+
+        return collect($reviewerGroups)
             ->skip(1)
             ->map(fn (array $group): string => (string) ($group['id'] ?? ''))
             ->filter(fn (string $groupId): bool => $groupId !== '')
@@ -1578,9 +1670,9 @@ class ProposalController extends Controller
             ->all();
     }
 
-    private function isMainReviewer(Request $request, Action $action): bool
+    private function isMainReviewer(Request $request, Action $action, ?Proposal $proposal = null): bool
     {
-        $mainReviewerRoleId = $this->mainReviewerRoleId($action);
+        $mainReviewerRoleId = $this->mainReviewerRoleId($action, $proposal);
 
         return $this->isInstitutionAccount($request)
             || ($mainReviewerRoleId !== null
@@ -1626,15 +1718,18 @@ class ProposalController extends Controller
             && preg_match('/\b(reject|deny|decline)\b/i', $branch['label']) === 1;
     }
 
-    private function userCanReviewAction(Request $request, Action $action): bool
+    private function userCanReviewAction(Request $request, Action $action, ?Proposal $proposal = null): bool
     {
         if ($this->isInstitutionAccount($request)) {
             return true;
         }
 
+        $reviewerGroups = $proposal === null
+            ? $action->reviewer_groups ?? []
+            : $this->effectiveReviewerGroupSet($proposal, $action)['reviewer_groups'];
         $roleIds = array_values(array_unique([
             ...$action->roles()->pluck('roles.id')->map(fn ($id): int => (int) $id)->all(),
-            ...collect($action->reviewer_groups ?? [])
+            ...collect($reviewerGroups)
                 ->flatMap(fn (array $group): array => $group['role_ids'] ?? [])
                 ->map(fn ($id): int => (int) $id)
                 ->all(),
@@ -1654,7 +1749,9 @@ class ProposalController extends Controller
      */
     private function reviewerAssignedDocumentIds(Request $request, Proposal $proposal, Action $action): array
     {
-        $reviewerGroups = collect($action->reviewer_groups ?? []);
+        $reviewerGroupSet = $this->effectiveReviewerGroupSet($proposal, $action);
+        $reviewerGroupSetKey = $reviewerGroupSet['key'];
+        $reviewerGroups = collect($reviewerGroupSet['reviewer_groups']);
 
         if ($reviewerGroups->isEmpty()) {
             return $action->documents()
@@ -1663,27 +1760,13 @@ class ProposalController extends Controller
                 ->all();
         }
 
-        $mostRecentDecision = $proposal->actionTransitions()
-            ->whereNotNull('decision')
-            ->orderByDesc('created_at')
-            ->orderByDesc('id')
-            ->first(['action_id', 'decision']);
-        $decisionDocumentSets = collect($action->review_decision_document_sets ?? [])
-            ->whenEmpty(fn ($sets) => $reviewerGroups
-                ->flatMap(fn (array $group): array => $group['decision_document_sets'] ?? []));
-        $matchingOutcomeDocumentIds = $decisionDocumentSets
-            ->filter(fn (array $set): bool => $mostRecentDecision !== null
-                && (int) ($set['action_id'] ?? 0) === (int) $mostRecentDecision->action_id
-                && (string) ($set['decision_id'] ?? '') === (string) $mostRecentDecision->decision)
-            ->flatMap(fn (array $set): array => $set['document_ids'] ?? [])
-            ->map(fn ($id): int => (int) $id)
-            ->all();
+        $matchingOutcomeDocumentIds = $this->matchingLegacyOutcomeDocumentIds($proposal, $action);
         $groupDocumentIds = fn (array $group): array => [
             ...array_map('intval', $group['document_ids'] ?? []),
             ...$matchingOutcomeDocumentIds,
         ];
 
-        if ($this->mainReviewerRoleId($action) !== null && $this->isMainReviewer($request, $action)) {
+        if ($this->mainReviewerRoleId($action, $proposal) !== null && $this->isMainReviewer($request, $action, $proposal)) {
             $mainReviewerGroup = $reviewerGroups->first();
 
             return $mainReviewerGroup === null
@@ -1699,6 +1782,7 @@ class ProposalController extends Controller
             ->where('proposal_id', $proposal->id)
             ->where('action_id', $action->id)
             ->where('round', $this->currentReviewRound($proposal, $action))
+            ->where('reviewer_group_set_key', $reviewerGroupSetKey)
             ->where('user_id', $identity['user_id'])
             ->where('user_type', $identity['user_type'])
             ->value('reviewer_group_id');
@@ -1718,7 +1802,7 @@ class ProposalController extends Controller
             ])
             ->map(fn ($id): int => (int) $id)
             ->unique()
-            ->merge($decisionDocumentSets->flatMap(fn (array $set): array => $set['document_ids'] ?? []))
+            ->merge($matchingOutcomeDocumentIds)
             ->map(fn ($id): int => (int) $id)
             ->unique()
             ->values();
@@ -1794,11 +1878,11 @@ class ProposalController extends Controller
         Proposal $proposal,
         Action $action,
     ): bool {
-        if ($this->mainReviewerRoleId($action) === null) {
-            return $this->userCanReviewAction($request, $action);
+        if ($this->mainReviewerRoleId($action, $proposal) === null) {
+            return $this->userCanReviewAction($request, $action, $proposal);
         }
 
-        if ($this->isMainReviewer($request, $action)) {
+        if ($this->isMainReviewer($request, $action, $proposal)) {
             return true;
         }
 
@@ -1812,6 +1896,7 @@ class ProposalController extends Controller
             ->where('proposal_id', $proposal->id)
             ->where('action_id', $action->id)
             ->where('round', $round)
+            ->where('reviewer_group_set_key', $this->effectiveReviewerGroupSet($proposal, $action)['key'])
             ->where('user_id', $identity['user_id'])
             ->where('user_type', $identity['user_type'])
             ->exists();

@@ -596,6 +596,100 @@ test('institution accounts must assign additional reviewers before making a deci
         ->and($proposal->actionTransitions()->count())->toBe(0);
 });
 
+test('review actions resolve outcome-specific reviewer groups and fall back to all groups', function (): void {
+    $process = Process::factory()->create();
+    $phase = Phase::factory()->for($process)->create();
+    $sourceReviewAction = Action::factory()->for($phase)->create([
+        'action_type' => 'review',
+        'decision_mode' => 'custom',
+        'custom_decision_branches' => [
+            ['id' => 'accepted', 'label' => 'Accepted', 'destination' => 'next'],
+            ['id' => 'revised', 'label' => 'Needs revision', 'destination' => 'next'],
+        ],
+        'order' => 1,
+    ]);
+    $mainRole = Role::factory()->create();
+    $subRole = Role::factory()->create();
+    $fallbackMainDocument = Document::factory()->create(['label' => 'doc']);
+    $fallbackSubDocument = Document::factory()->create(['label' => 'doc']);
+    $acceptedDocument = Document::factory()->create(['label' => 'doc']);
+    $reviewAction = Action::factory()->for($phase)->create([
+        'action_type' => 'review',
+        'order' => 2,
+        'reviewer_groups' => [
+            [
+                'id' => 'fallback-main',
+                'name' => 'Fallback main reviewer',
+                'role_ids' => [$mainRole->id],
+                'document_ids' => [$fallbackMainDocument->id],
+            ],
+            [
+                'id' => 'fallback-sub',
+                'name' => 'Fallback subgroup',
+                'role_ids' => [$subRole->id],
+                'document_ids' => [$fallbackSubDocument->id],
+            ],
+        ],
+        'reviewer_group_sets' => [[
+            'key' => $sourceReviewAction->id.':accepted',
+            'action_id' => $sourceReviewAction->id,
+            'decision_id' => 'accepted',
+            'reviewer_groups' => [[
+                'id' => 'accepted-main',
+                'name' => 'Accepted main reviewer',
+                'role_ids' => [$mainRole->id],
+                'document_ids' => [$acceptedDocument->id],
+            ]],
+        ]],
+    ]);
+    $acceptedProposal = Proposal::create([
+        'title' => 'Accepted proposal',
+        'user_id' => 2,
+        'user_type' => User::class,
+        'institution_id' => 1,
+        'process_id' => $process->id,
+        'current_phase_id' => $phase->id,
+        'current_action_id' => $reviewAction->id,
+    ]);
+    $acceptedProposal->actionTransitions()->create([
+        'action_id' => $sourceReviewAction->id,
+        'decision' => 'accepted',
+    ]);
+    $fallbackProposal = Proposal::create([
+        'title' => 'Needs revision proposal',
+        'user_id' => 3,
+        'user_type' => User::class,
+        'institution_id' => 1,
+        'process_id' => $process->id,
+        'current_phase_id' => $phase->id,
+        'current_action_id' => $reviewAction->id,
+    ]);
+    $fallbackProposal->actionTransitions()->create([
+        'action_id' => $sourceReviewAction->id,
+        'decision' => 'revised',
+    ]);
+    $request = proposalRequestAsOwner(Request::create('/tenant/proposals?view=tracking', 'GET'));
+    $request->user()->setAttribute('role', 'institution');
+    $trackingProposals = collect(app(ProposalController::class)
+        ->index($request)
+        ->toResponse($request)
+        ->getData(true)['props']['proposals'])
+        ->keyBy('id');
+
+    expect($trackingProposals[$acceptedProposal->id]['review_reviewer_group_set_key'])
+        ->toBe($sourceReviewAction->id.':accepted')
+        ->and($trackingProposals[$acceptedProposal->id]['review_reviewer_groups'])
+        ->toBe([])
+        ->and(collect($trackingProposals[$acceptedProposal->id]['review_documents'])->pluck('id')->all())
+        ->toBe([$acceptedDocument->id])
+        ->and($trackingProposals[$fallbackProposal->id]['review_reviewer_group_set_key'])
+        ->toBe('all')
+        ->and(collect($trackingProposals[$fallbackProposal->id]['review_reviewer_groups'])->pluck('name')->all())
+        ->toBe(['Fallback subgroup'])
+        ->and(collect($trackingProposals[$fallbackProposal->id]['review_documents'])->pluck('id')->sort()->values()->all())
+        ->toBe(collect([$fallbackMainDocument->id, $fallbackSubDocument->id])->sort()->values()->all());
+});
+
 test('review assignment candidates come from institution users in users management', function () {
     $institution = User::factory()->create(['role' => 'institution']);
     $reviewerRole = Role::factory()->create();
@@ -750,6 +844,15 @@ test('rejection reviews persist comments for flagged proposal files', function (
 test('main-role members can assign reviewers and decisions wait for recommendations', function () {
     $process = Process::factory()->create();
     $phase = Phase::factory()->for($process)->create();
+    $sourceReviewAction = Action::factory()->for($phase)->create([
+        'action_type' => 'review',
+        'decision_mode' => 'custom',
+        'custom_decision_branches' => [
+            ['id' => 'assigned', 'label' => 'Assigned', 'destination' => 'next'],
+        ],
+        'order' => 1,
+    ]);
+    $reviewerGroupSetKey = $sourceReviewAction->id.':assigned';
     $mainReviewerRole = Role::create(['name' => 'Main reviewer']);
     $subReviewerRole = Role::create(['name' => 'Legal reviewer']);
     $secondSubReviewerRole = Role::create(['name' => 'Finance reviewer']);
@@ -778,24 +881,32 @@ test('main-role members can assign reviewers and decisions wait for recommendati
         ['role_id' => $subReviewerRole->id, 'tenant_user_id' => 2],
         ['role_id' => $secondSubReviewerRole->id, 'tenant_user_id' => 4],
     ]);
+    $reviewerGroups = [[
+        'id' => 'assignment-1',
+        'name' => 'Main reviewer role',
+        'role_ids' => [$mainReviewerRole->id],
+        'document_ids' => [],
+    ], [
+        'id' => 'legal-reviewer',
+        'name' => 'Legal review',
+        'role_ids' => [$subReviewerRole->id],
+        'document_ids' => [],
+    ], [
+        'id' => 'finance-reviewer',
+        'name' => 'Finance review',
+        'role_ids' => [$secondSubReviewerRole->id],
+        'document_ids' => [],
+    ]];
     $reviewAction = Action::factory()->for($phase)->create([
         'action_type' => 'review',
         'decision_mode' => 'approve_deny',
-        'reviewer_groups' => [[
-            'id' => 'assignment-1',
-            'name' => 'Main reviewer role',
-            'role_ids' => [$mainReviewerRole->id],
-            'document_ids' => [],
-        ], [
-            'id' => 'legal-reviewer',
-            'name' => 'Legal review',
-            'role_ids' => [$subReviewerRole->id],
-            'document_ids' => [],
-        ], [
-            'id' => 'finance-reviewer',
-            'name' => 'Finance review',
-            'role_ids' => [$secondSubReviewerRole->id],
-            'document_ids' => [],
+        'order' => 2,
+        'reviewer_groups' => $reviewerGroups,
+        'reviewer_group_sets' => [[
+            'key' => $reviewerGroupSetKey,
+            'action_id' => $sourceReviewAction->id,
+            'decision_id' => 'assigned',
+            'reviewer_groups' => $reviewerGroups,
         ]],
     ]);
     $proposal = Proposal::create([
@@ -807,6 +918,10 @@ test('main-role members can assign reviewers and decisions wait for recommendati
         'current_phase_id' => $phase->id,
         'current_action_id' => $reviewAction->id,
     ]);
+    $proposal->actionTransitions()->create([
+        'action_id' => $sourceReviewAction->id,
+        'decision' => 'assigned',
+    ]);
     $controller = app(ProposalController::class);
     $mainReviewer = new SuperadminTenantUser;
     $mainReviewer->setAttribute($mainReviewer->getKeyName(), 1);
@@ -814,10 +929,13 @@ test('main-role members can assign reviewers and decisions wait for recommendati
     $incompleteAssignmentRequest = Request::create(
         '/tenant/proposals/'.$proposal->id.'/reviewers',
         'PUT',
-        ['assignments' => [[
-            'reviewer_group_id' => 'legal-reviewer',
-            'reviewer' => SuperadminTenantUser::class.':2',
-        ]]],
+        [
+            'reviewer_group_set_key' => $reviewerGroupSetKey,
+            'assignments' => [[
+                'reviewer_group_id' => 'legal-reviewer',
+                'reviewer' => SuperadminTenantUser::class.':2',
+            ]],
+        ],
     );
     $incompleteAssignmentRequest->setUserResolver(fn (): SuperadminTenantUser => $mainReviewer);
 
@@ -830,16 +948,19 @@ test('main-role members can assign reviewers and decisions wait for recommendati
     $assignmentRequest = Request::create(
         '/tenant/proposals/'.$proposal->id.'/reviewers',
         'PUT',
-        ['assignments' => [
-            [
-                'reviewer_group_id' => 'legal-reviewer',
-                'reviewer' => SuperadminTenantUser::class.':2',
+        [
+            'reviewer_group_set_key' => $reviewerGroupSetKey,
+            'assignments' => [
+                [
+                    'reviewer_group_id' => 'legal-reviewer',
+                    'reviewer' => SuperadminTenantUser::class.':2',
+                ],
+                [
+                    'reviewer_group_id' => 'finance-reviewer',
+                    'reviewer' => SuperadminTenantUser::class.':4',
+                ],
             ],
-            [
-                'reviewer_group_id' => 'finance-reviewer',
-                'reviewer' => SuperadminTenantUser::class.':4',
-            ],
-        ]],
+        ],
     );
     $assignmentRequest->setUserResolver(fn (): SuperadminTenantUser => $mainReviewer);
     $controller->assignReviewers($assignmentRequest, $proposal, app(ReviewAssignmentService::class));
@@ -855,16 +976,19 @@ test('main-role members can assign reviewers and decisions wait for recommendati
     $takeoverRequest = Request::create(
         '/tenant/proposals/'.$proposal->id.'/reviewers',
         'PUT',
-        ['assignments' => [
-            [
-                'reviewer_group_id' => 'legal-reviewer',
-                'reviewer' => SuperadminTenantUser::class.':2',
+        [
+            'reviewer_group_set_key' => $reviewerGroupSetKey,
+            'assignments' => [
+                [
+                    'reviewer_group_id' => 'legal-reviewer',
+                    'reviewer' => SuperadminTenantUser::class.':2',
+                ],
+                [
+                    'reviewer_group_id' => 'finance-reviewer',
+                    'reviewer' => SuperadminTenantUser::class.':4',
+                ],
             ],
-            [
-                'reviewer_group_id' => 'finance-reviewer',
-                'reviewer' => SuperadminTenantUser::class.':4',
-            ],
-        ]],
+        ],
     );
     $takeoverRequest->setUserResolver(fn (): SuperadminTenantUser => $otherRoleMember);
     $controller->assignReviewers(
@@ -875,6 +999,7 @@ test('main-role members can assign reviewers and decisions wait for recommendati
 
     expect($reviewer->fresh()->assigned_by_user_id)->toBe(3)
         ->and($reviewer->fresh()->reviewer_group_id)->toBe('legal-reviewer')
+        ->and($reviewer->fresh()->reviewer_group_set_key)->toBe($reviewerGroupSetKey)
         ->and(ProposalActionReviewer::query()->where('reviewer_group_id', 'finance-reviewer')->exists())->toBeTrue();
 
     $mainRequest = Request::create(
@@ -887,7 +1012,7 @@ test('main-role members can assign reviewers and decisions wait for recommendati
     expect(fn () => $controller->review($mainRequest, $proposal))
         ->toThrow(ValidationException::class)
         ->and($proposal->fresh()->current_action_id)->toBe($reviewAction->id)
-        ->and($proposal->actionTransitions()->count())->toBe(0);
+        ->and($proposal->actionTransitions()->count())->toBe(1);
 
     $additionalReviewer = new SuperadminTenantUser;
     $additionalReviewer->setAttribute($additionalReviewer->getKeyName(), 2);
@@ -911,13 +1036,13 @@ test('main-role members can assign reviewers and decisions wait for recommendati
     expect($reviewer->fresh()->decision)->toBe('deny')
         ->and($reviewer->fresh()->comment)->toBe('Needs more detail.')
         ->and($proposal->fresh()->current_action_id)->toBe($reviewAction->id)
-        ->and($proposal->actionTransitions()->count())->toBe(0);
+        ->and($proposal->actionTransitions()->count())->toBe(1);
 
     $controller->review($mainRequest, $proposal->fresh());
 
     expect($proposal->fresh()->current_action_id)->toBeNull()
         ->and($proposal->fresh()->completed_at)->not->toBeNull()
-        ->and($proposal->actionTransitions()->count())->toBe(1);
+        ->and($proposal->actionTransitions()->count())->toBe(2);
 });
 
 test('uploaded proposal documents persist their required phase and document', function () {

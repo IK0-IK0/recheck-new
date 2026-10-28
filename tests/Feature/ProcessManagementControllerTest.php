@@ -423,6 +423,59 @@ test('reviewer group outcome document sets persist and join the action requireme
         ->toBe(collect([$allDocument->id, $outcomeDocument->id, $subGroupDocument->id])->sort()->values()->all());
 });
 
+test('outcome-specific reviewer group sets persist with their roles and documents', function (): void {
+    $process = Process::factory()->create();
+    $phase = Phase::factory()->for($process)->create();
+    $sourceAction = Action::factory()->for($phase)->create([
+        'action_type' => 'review',
+        'decision_mode' => 'custom',
+        'custom_decision_branches' => [
+            ['id' => 'accepted', 'label' => 'Accepted', 'destination' => 'next'],
+        ],
+        'order' => 1,
+    ]);
+    $fallbackRole = Role::factory()->create();
+    $acceptedRole = Role::factory()->create();
+    $fallbackDocument = Document::factory()->create();
+    $acceptedDocument = Document::factory()->create();
+    $reviewerGroups = [[
+        'id' => 'fallback-main',
+        'name' => 'Fallback main reviewer',
+        'role_ids' => [$fallbackRole->id],
+        'document_ids' => [$fallbackDocument->id],
+    ]];
+    $reviewerGroupSets = [[
+        'key' => $sourceAction->id.':accepted',
+        'action_id' => $sourceAction->id,
+        'decision_id' => 'accepted',
+        'reviewer_groups' => [[
+            'id' => 'accepted-main',
+            'name' => 'Accepted main reviewer',
+            'role_ids' => [$acceptedRole->id],
+            'document_ids' => [$acceptedDocument->id],
+        ]],
+    ]];
+
+    (new ProcessManagementController)->storeAction(
+        Request::create('/actions', 'POST', [
+            'name' => 'Outcome-specific review',
+            'action_type' => 'review',
+            'reviewer_groups' => $reviewerGroups,
+            'reviewer_group_sets' => $reviewerGroupSets,
+        ]),
+        $phase,
+    );
+
+    $action = $phase->actions()->where('name', 'Outcome-specific review')->firstOrFail();
+
+    expect($action->reviewer_groups)->toBe($reviewerGroups)
+        ->and($action->reviewer_group_sets)->toBe($reviewerGroupSets)
+        ->and($action->roles()->pluck('roles.id')->sort()->values()->all())
+        ->toBe(collect([$fallbackRole->id, $acceptedRole->id])->sort()->values()->all())
+        ->and($action->documents()->pluck('documents.id')->sort()->values()->all())
+        ->toBe(collect([$fallbackDocument->id, $acceptedDocument->id])->sort()->values()->all());
+});
+
 // ---------------------------------------------------------------------------
 // Property 2: Phase Reorder Consistency
 //

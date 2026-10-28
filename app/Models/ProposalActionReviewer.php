@@ -14,6 +14,7 @@ class ProposalActionReviewer extends Model
         'action_id',
         'round',
         'reviewer_group_id',
+        'reviewer_group_set_key',
         'user_id',
         'user_type',
         'assigned_by_user_id',

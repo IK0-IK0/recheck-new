@@ -22,6 +22,7 @@ use Illuminate\Support\Carbon;
  * @property string $decision_mode
  * @property array<int, array{id: string, label: string, destination: string}>|null $custom_decision_branches
  * @property array<int, array{id: string, name: string, role_ids: array<int, int>, document_ids: array<int, int>, decision_document_sets?: array<int, array{action_id: int, decision_id: string, role_ids?: array<int, int>, document_ids: array<int, int>}>}>|null $reviewer_groups
+ * @property array<int, array{key: string, action_id: int, decision_id: string, reviewer_groups: array<int, array{id: string, name: string, role_ids: array<int, int>, document_ids: array<int, int>}>}>|null $reviewer_group_sets
  * @property array<int, array{action_id: int, decision_id: string, document_ids: array<int, int>}>|null $review_decision_document_sets
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
@@ -54,6 +55,7 @@ class Action extends Model
         'decision_mode',
         'custom_decision_branches',
         'reviewer_groups',
+        'reviewer_group_sets',
         'review_decision_document_sets',
     ];
 
@@ -67,6 +69,7 @@ class Action extends Model
         return [
             'custom_decision_branches' => 'array',
             'reviewer_groups' => 'array',
+            'reviewer_group_sets' => 'array',
             'review_decision_document_sets' => 'array',
         ];
     }

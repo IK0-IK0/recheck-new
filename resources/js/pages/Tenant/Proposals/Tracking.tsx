@@ -105,6 +105,7 @@ type Proposal = {
     is_additional_reviewer?: boolean;
     requires_additional_reviewers?: boolean;
     can_submit_decision?: boolean;
+    review_reviewer_group_set_key?: string;
     review_members?: ReviewMember[];
     review_reviewer_groups?: ReviewGroupAssignment[];
     member_decision?: string | null;
@@ -323,8 +324,13 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
         ? selectedMemberRecommendation
         : (reviewDecisions[0]?.value ?? '');
     const reviewerGroups = selectedProposal?.review_reviewer_groups ?? [];
+    const reviewerGroupSetKey = selectedProposal?.review_reviewer_group_set_key ?? 'all';
+    const reviewerSelectionKey = (groupId: string): string => `${reviewerGroupSetKey}:${groupId}`;
     const assignedReviewerSelections = Object.fromEntries(
-        reviewerGroups.map((group) => [group.id, group.assigned_reviewer_id ?? '']),
+        reviewerGroups.map((group) => [
+            reviewerSelectionKey(group.id),
+            group.assigned_reviewer_id ?? '',
+        ]),
     );
     const selectedReviewerSelections = selectedProposal
         ? reviewerSelections[selectedProposal.id] ?? assignedReviewerSelections
@@ -337,7 +343,7 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
     );
     const requiresAdditionalReviewers = selectedProposal?.requires_additional_reviewers ?? false;
     const hasUnsavedReviewerChanges = reviewerGroups.some(
-        (group) => selectedReviewerSelections[group.id] !== (group.assigned_reviewer_id ?? ''),
+        (group) => selectedReviewerSelections[reviewerSelectionKey(group.id)] !== (group.assigned_reviewer_id ?? ''),
     );
     const isRejectingReview = isRejectionOutcome(
         reviewDecision,
@@ -448,7 +454,7 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
             const selectedAssignments = current[selectedProposal.id]
                 ?? Object.fromEntries(
                     (selectedProposal.review_reviewer_groups ?? []).map((group) => [
-                        group.id,
+                        `${selectedProposal.review_reviewer_group_set_key ?? 'all'}:${group.id}`,
                         group.assigned_reviewer_id ?? '',
                     ]),
                 );
@@ -467,7 +473,7 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
         if (
             !selectedProposal?.is_main_reviewer
             || !hasUnsavedReviewerChanges
-            || reviewerGroups.some((group) => !selectedReviewerSelections[group.id])
+            || reviewerGroups.some((group) => !selectedReviewerSelections[reviewerSelectionKey(group.id)])
         ) {
             return;
         }
@@ -475,9 +481,10 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
         router.put(
             `/tenant/proposals/${selectedProposal.id}/reviewers`,
             {
+                reviewer_group_set_key: reviewerGroupSetKey,
                 assignments: reviewerGroups.map((group) => ({
                     reviewer_group_id: group.id,
-                    reviewer: selectedReviewerSelections[group.id],
+                    reviewer: selectedReviewerSelections[reviewerSelectionKey(group.id)],
                 })),
             },
             {
@@ -1343,7 +1350,7 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                                         isSubmittingDecision
                                                         || hasReviewerResponded
                                                         || !hasUnsavedReviewerChanges
-                                                        || reviewerGroups.some((group) => !selectedReviewerSelections[group.id])
+                                                        || reviewerGroups.some((group) => !selectedReviewerSelections[reviewerSelectionKey(group.id)])
                                                     }
                                                     onClick={handleSaveReviewers}
                                                 >
@@ -1362,8 +1369,8 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                                             </div>
                                                             {group.candidates.length > 0 ? (
                                                                 <Select
-                                                                    value={selectedReviewerSelections[group.id] ?? ''}
-                                                                    onValueChange={(reviewerId) => handleReviewerSelection(group.id, reviewerId)}
+                                                                    value={selectedReviewerSelections[reviewerSelectionKey(group.id)] ?? ''}
+                                                                    onValueChange={(reviewerId) => handleReviewerSelection(reviewerSelectionKey(group.id), reviewerId)}
                                                                     disabled={isSubmittingDecision || hasReviewerResponded}
                                                                 >
                                                                     <SelectTrigger aria-label={`Reviewer for ${group.name}`}>
@@ -1375,7 +1382,7 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                                                             const assignedToAnotherGroup = reviewerGroups.some(
                                                                                 (otherGroup) =>
                                                                                     otherGroup.id !== group.id
-                                                                                    && selectedReviewerSelections[otherGroup.id] === reviewerId,
+                                                                                && selectedReviewerSelections[reviewerSelectionKey(otherGroup.id)] === reviewerId,
                                                                             );
 
                                                                             return (
