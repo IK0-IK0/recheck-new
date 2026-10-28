@@ -6,9 +6,13 @@ use App\Models\Action;
 use App\Models\Document;
 use App\Models\Phase;
 use App\Models\Process;
+use App\Models\Proposal;
 use App\Models\Role;
+use App\Models\SuperadminTenantUser;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -17,7 +21,7 @@ class ProcessManagementController extends Controller
     /**
      * Display all processes with their nested phases and actions.
      */
-    public function index(): Response
+    public function index(Request $request): Response
     {
         $processes = Process::with([
             'phases' => fn ($query) => $query->orderBy('order')->orderBy('id'),
@@ -27,12 +31,133 @@ class ProcessManagementController extends Controller
         ])->orderBy('id')->get();
         $roles = Role::orderBy('name')->get();
         $documents = Document::orderBy('name')->get();
+        $proposals = collect();
+        $institutionId = $request->user()->getInstitutionId();
+
+        if ($institutionId !== null) {
+            $proposalQuery = Proposal::query()
+                ->where('institution_id', $institutionId)
+                ->whereNull('completed_at')
+                ->whereNotNull('process_id');
+
+            if (! $this->userHasPermission($request, 'proposal.view.all')) {
+                $roleIds = $this->userRoleIds($request);
+                $assignedActionIds = $this->assignedReviewActionIds($roleIds);
+
+                $proposalQuery->where(function (Builder $query) use ($request, $assignedActionIds): void {
+                    $query->where(function (Builder $query) use ($request): void {
+                        $query
+                            ->where('user_id', $request->user()->getKey())
+                            ->where('user_type', $request->user()::class);
+                    });
+
+                    if ($assignedActionIds !== []) {
+                        $query->orWhereIn('current_action_id', $assignedActionIds);
+                    }
+                });
+            }
+
+            $proposals = $proposalQuery
+                ->with([
+                    'currentPhase:id,name',
+                    'currentAction:id,name',
+                ])
+                ->orderBy('title')
+                ->get([
+                    'id',
+                    'title',
+                    'process_id',
+                    'current_phase_id',
+                    'current_action_id',
+                ])
+                ->map(fn (Proposal $proposal): array => [
+                    'id' => (int) $proposal->id,
+                    'title' => $proposal->title,
+                    'process_id' => (int) $proposal->process_id,
+                    'current_phase_id' => $proposal->current_phase_id === null
+                        ? null
+                        : (int) $proposal->current_phase_id,
+                    'current_phase' => $proposal->currentPhase === null
+                        ? null
+                        : [
+                            'id' => (int) $proposal->currentPhase->id,
+                            'name' => $proposal->currentPhase->name,
+                        ],
+                    'current_action' => $proposal->currentAction === null
+                        ? null
+                        : [
+                            'id' => (int) $proposal->currentAction->id,
+                            'name' => $proposal->currentAction->name,
+                        ],
+                ]);
+        }
 
         return Inertia::render('Tenant/ProcessManagement', [
             'processes' => $processes,
             'roles' => $roles,
             'documents' => $documents,
+            'proposals' => $proposals,
         ]);
+    }
+
+    /**
+     * @return list<int>
+     */
+    private function userRoleIds(Request $request): array
+    {
+        $user = $request->user();
+        $pivotTable = $user instanceof SuperadminTenantUser ? 'role_tenant_user' : 'role_user';
+        $userIdColumn = $user instanceof SuperadminTenantUser ? 'tenant_user_id' : 'user_id';
+
+        return DB::connection('tenant')->table($pivotTable)
+            ->where($userIdColumn, $user->getKey())
+            ->pluck('role_id')
+            ->map(fn ($roleId): int => (int) $roleId)
+            ->all();
+    }
+
+    private function userHasPermission(Request $request, string $permissionName): bool
+    {
+        $user = $request->user();
+        $pivotTable = $user instanceof SuperadminTenantUser ? 'role_tenant_user' : 'role_user';
+        $userIdColumn = $user instanceof SuperadminTenantUser ? 'tenant_user_id' : 'user_id';
+
+        return DB::connection('tenant')->table($pivotTable)
+            ->join('permission_role', 'permission_role.role_id', '=', $pivotTable.'.role_id')
+            ->join('permissions', 'permissions.id', '=', 'permission_role.permission_id')
+            ->where($pivotTable.'.'.$userIdColumn, $user->getKey())
+            ->where('permissions.name', $permissionName)
+            ->exists();
+    }
+
+    /**
+     * @param  list<int>  $roleIds
+     * @return list<int>
+     */
+    private function assignedReviewActionIds(array $roleIds): array
+    {
+        if ($roleIds === []) {
+            return [];
+        }
+
+        $actionIds = DB::connection('tenant')->table('action_role')
+            ->whereIn('role_id', $roleIds)
+            ->pluck('action_id')
+            ->map(fn ($actionId): int => (int) $actionId)
+            ->all();
+        $reviewerGroupActionIds = Action::query()
+            ->where('action_type', 'review')
+            ->get(['id', 'reviewer_groups'])
+            ->filter(fn (Action $action): bool => collect($action->reviewer_groups ?? [])
+                ->contains(fn (array $group): bool => array_intersect(
+                    array_map('intval', $group['role_ids'] ?? []),
+                    $roleIds,
+                ) !== []))
+            ->pluck('id')
+            ->map(fn ($actionId): int => (int) $actionId)
+            ->all();
+
+        return array_values(array_unique([...$actionIds, ...$reviewerGroupActionIds]));
     }
 
     /**

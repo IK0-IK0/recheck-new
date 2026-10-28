@@ -96,11 +96,15 @@ function buildDecisionBranches(action, actions = [], nextPhase = null) {
 
 export default function ProcessManagement({
     processes = [],
+    proposals = [],
     roles = [],
     documents = [],
 }) {
+    const [selectedProposalId, setSelectedProposalId] = useState(
+        proposals[0]?.id ?? null,
+    );
     const [selectedProcessId, setSelectedProcessId] = useState(
-        processes[0]?.id ?? null,
+        proposals[0]?.process_id ?? processes[0]?.id ?? null,
     );
     const [activePhaseId, setActivePhaseId] = useState(null);
     const [editingProcess, setEditingProcess] = useState(null);
@@ -116,8 +120,10 @@ export default function ProcessManagement({
     const form = useForm({ name: '', description: '' });
     const processErrors = form.errors || {};
 
+    const selectedProposal =
+        proposals.find((proposal) => proposal.id === selectedProposalId) ?? null;
     const activeProcess =
-        processes.find((p) => p.id === selectedProcessId) ?? null;
+        processes.find((process) => process.id === selectedProcessId) ?? null;
 
     const phases = activeProcess?.phases ?? [];
     const activePhase =
@@ -200,10 +206,22 @@ export default function ProcessManagement({
         [activePhaseActions, nextPhase],
     );
 
-    // When the selected process changes, reset to the first phase
+    // Keep the selected proposal's current phase in focus when its process is selected.
     useEffect(() => {
-        setActivePhaseId(phases[0]?.id ?? null);
-    }, [selectedProcessId]);
+        const proposalPhaseId =
+            selectedProposal?.process_id === selectedProcessId
+                ? selectedProposal.current_phase_id
+                : null;
+
+        setActivePhaseId(
+            proposalPhaseId ?? activeProcess?.phases?.[0]?.id ?? null,
+        );
+    }, [
+        activeProcess,
+        selectedProcessId,
+        selectedProposal?.current_phase_id,
+        selectedProposal?.process_id,
+    ]);
 
     const handleCreateProcess = async (values) => {
         const existingProcessIds = new Set(processes.map((process) => process.id));
@@ -223,6 +241,7 @@ export default function ProcessManagement({
                     return;
                 }
 
+                setSelectedProposalId(null);
                 setSelectedProcessId(createdProcess.id);
                 toast.success('Process created.');
             },
@@ -471,17 +490,58 @@ export default function ProcessManagement({
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                        {proposals.length > 0 ? (
+                            <div className="relative">
+                                <select
+                                    value={selectedProposalId ?? ''}
+                                    onChange={(event) => {
+                                        const proposalId = Number(
+                                            event.target.value,
+                                        );
+                                        const proposal = proposals.find(
+                                            (item) => item.id === proposalId,
+                                        );
+
+                                        setSelectedProposalId(
+                                            proposal?.id ?? null,
+                                        );
+
+                                        if (proposal) {
+                                            setSelectedProcessId(
+                                                proposal.process_id,
+                                            );
+                                        }
+                                    }}
+                                    aria-label="Select active proposal"
+                                    className="h-8 max-w-48 appearance-none truncate rounded-lg border border-input bg-background py-1.5 pr-8 pl-3 text-xs shadow-xs transition outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+                                >
+                                    <option value="">No proposal selected</option>
+                                    {proposals.map((proposal) => (
+                                        <option
+                                            key={proposal.id}
+                                            value={proposal.id}
+                                        >
+                                            {proposal.title}
+                                        </option>
+                                    ))}
+                                </select>
+                                <ChevronDown className="pointer-events-none absolute top-1/2 right-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                            </div>
+                        ) : null}
+
                         {/* Process selector */}
                         {processes.length ? (
                             <div className="relative">
                                 <select
                                     value={selectedProcessId ?? ''}
-                                    onChange={(e) =>
+                                    onChange={(event) => {
                                         setSelectedProcessId(
-                                            Number(e.target.value),
-                                        )
-                                    }
+                                            Number(event.target.value),
+                                        );
+                                        setSelectedProposalId(null);
+                                    }}
+                                    aria-label="Select process"
                                     className="h-8 appearance-none rounded-lg border border-input bg-background py-1.5 pr-8 pl-3 text-xs shadow-xs transition outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
                                 >
                                     {processes.map((process) => (
@@ -528,6 +588,17 @@ export default function ProcessManagement({
                                             {activeProcess.description ? (
                                                 <p className="mt-0.5 text-xs text-muted-foreground">
                                                     {activeProcess.description}
+                                                </p>
+                                            ) : null}
+                                            {selectedProposal ? (
+                                                <p className="mt-1 text-xs text-muted-foreground">
+                                                    {selectedProposal.title}
+                                                    {' · '}
+                                                    {selectedProposal.current_phase?.name ??
+                                                        'Phase not started'}
+                                                    {selectedProposal.current_action
+                                                        ? ` · ${selectedProposal.current_action.name}`
+                                                        : ''}
                                                 </p>
                                             ) : null}
                                         </div>
