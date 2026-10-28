@@ -1331,84 +1331,68 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                             </div>
 
                                 {selectedProposal.is_main_reviewer
+                                && selectedProposal.current_action?.action_type === 'review'
+                                && requiresAdditionalReviewers ? (
+                                    <section className="shrink-0 space-y-3">
+                                        <div>
+                                            <h3 className="text-sm font-semibold">Sub-review groups</h3>
+                                            <p className="text-xs text-muted-foreground">
+                                                Assign one person to each group. Submit your decision after everyone responds.
+                                            </p>
+                                        </div>
+                                        <div className="grid gap-3 sm:grid-cols-2">
+                                            {reviewerGroups.map((group) => (
+                                                <div key={group.id} className="space-y-2 rounded-md border border-border p-3">
+                                                    <div>
+                                                        <p className="text-sm font-medium">{group.name}</p>
+                                                        <p className="text-xs text-muted-foreground">
+                                                            {group.candidates.length} eligible user{group.candidates.length === 1 ? '' : 's'}
+                                                        </p>
+                                                    </div>
+                                                    {group.candidates.length > 0 ? (
+                                                        <Select
+                                                            value={selectedReviewerSelections[reviewerSelectionKey(group.id)] ?? ''}
+                                                            onValueChange={(reviewerId) => handleReviewerSelection(reviewerSelectionKey(group.id), reviewerId)}
+                                                            disabled={isSubmittingDecision || hasReviewerResponded}
+                                                        >
+                                                            <SelectTrigger aria-label={`Reviewer for ${group.name}`}>
+                                                                <SelectValue placeholder="Choose a reviewer" />
+                                                            </SelectTrigger>
+                                                            <SelectContent>
+                                                                {group.candidates.map((candidate) => {
+                                                                    const reviewerId = `${candidate.user_type}:${candidate.id}`;
+                                                                    const assignedToAnotherGroup = reviewerGroups.some(
+                                                                        (otherGroup) =>
+                                                                            otherGroup.id !== group.id
+                                                                            && selectedReviewerSelections[reviewerSelectionKey(otherGroup.id)] === reviewerId,
+                                                                    );
+
+                                                                    return (
+                                                                        <SelectItem
+                                                                            key={reviewerId}
+                                                                            value={reviewerId}
+                                                                            disabled={assignedToAnotherGroup}
+                                                                        >
+                                                                            {candidate.name} · {candidate.email}
+                                                                        </SelectItem>
+                                                                    );
+                                                                })}
+                                                            </SelectContent>
+                                                        </Select>
+                                                    ) : (
+                                                        <p className="text-sm text-muted-foreground">
+                                                            No Users Management accounts are assigned to this group's role.
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </section>
+                                ) : null}
+
+                                {selectedProposal.is_main_reviewer
                                 && selectedProposal.current_action?.action_type === 'review' ? (
                                     <section className="mt-auto shrink-0 space-y-4 border-t border-border bg-background pt-4">
-                                        {requiresAdditionalReviewers ? (
-                                            <div className="flex flex-col gap-3">
-                                                <div className="flex items-start justify-between gap-3">
-                                                <div>
-                                                    <h3 className="text-sm font-semibold">Sub-review groups</h3>
-                                                    <p className="text-xs text-muted-foreground">
-                                                        Assign one person to each group. Submit your decision after everyone responds.
-                                                    </p>
-                                                </div>
-                                                <Button
-                                                    type="button"
-                                                    size="sm"
-                                                    className="shrink-0"
-                                                    disabled={
-                                                        isSubmittingDecision
-                                                        || hasReviewerResponded
-                                                        || !hasUnsavedReviewerChanges
-                                                        || reviewerGroups.some((group) => !selectedReviewerSelections[reviewerSelectionKey(group.id)])
-                                                    }
-                                                    onClick={handleSaveReviewers}
-                                                >
-                                                    {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                                                    {hasAssignedReviewers ? 'Update assignments' : 'Assign reviewers'}
-                                                </Button>
-                                                </div>
-                                                <div className="grid gap-3 sm:grid-cols-2">
-                                                    {reviewerGroups.map((group) => (
-                                                        <div key={group.id} className="space-y-2 rounded-md border border-border p-3">
-                                                            <div>
-                                                                <p className="text-sm font-medium">{group.name}</p>
-                                                                <p className="text-xs text-muted-foreground">
-                                                                    {group.candidates.length} eligible user{group.candidates.length === 1 ? '' : 's'}
-                                                                </p>
-                                                            </div>
-                                                            {group.candidates.length > 0 ? (
-                                                                <Select
-                                                                    value={selectedReviewerSelections[reviewerSelectionKey(group.id)] ?? ''}
-                                                                    onValueChange={(reviewerId) => handleReviewerSelection(reviewerSelectionKey(group.id), reviewerId)}
-                                                                    disabled={isSubmittingDecision || hasReviewerResponded}
-                                                                >
-                                                                    <SelectTrigger aria-label={`Reviewer for ${group.name}`}>
-                                                                        <SelectValue placeholder="Choose a reviewer" />
-                                                                    </SelectTrigger>
-                                                                    <SelectContent>
-                                                                        {group.candidates.map((candidate) => {
-                                                                            const reviewerId = `${candidate.user_type}:${candidate.id}`;
-                                                                            const assignedToAnotherGroup = reviewerGroups.some(
-                                                                                (otherGroup) =>
-                                                                                    otherGroup.id !== group.id
-                                                                                && selectedReviewerSelections[reviewerSelectionKey(otherGroup.id)] === reviewerId,
-                                                                            );
-
-                                                                            return (
-                                                                                <SelectItem
-                                                                                    key={reviewerId}
-                                                                                    value={reviewerId}
-                                                                                    disabled={assignedToAnotherGroup}
-                                                                                >
-                                                                                    {candidate.name} · {candidate.email}
-                                                                                </SelectItem>
-                                                                            );
-                                                                        })}
-                                                                    </SelectContent>
-                                                                </Select>
-                                                            ) : (
-                                                                <p className="text-sm text-muted-foreground">
-                                                                    No Users Management accounts are assigned to this group's role.
-                                                                </p>
-                                                            )}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        ) : null}
-                                        {(!requiresAdditionalReviewers || hasAssignedReviewers) ? (
-                                            <>
                                         {hasAssignedReviewers ? (
                                             <div className="space-y-2">
                                                 <h3 className="text-sm font-semibold">Reviewer recommendations</h3>
@@ -1466,26 +1450,41 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                                     ))}
                                                 </SelectContent>
                                             </Select>
-                                            <Button
-                                                type="button"
-                                                disabled={
-                                                    isSubmittingDecision
-                                                    || reviewDecision === ''
-                                                    || !assignedReviewDocumentsComplete
-                                                    || !selectedProposal.can_submit_decision
-                                                }
-                                                onClick={() => handleReviewDecision(reviewDecision)}
-                                            >
-                                                {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                                                Submit decision
-                                            </Button>
+                                            {requiresAdditionalReviewers
+                                            && (!hasAssignedReviewers || hasUnsavedReviewerChanges) ? (
+                                                <Button
+                                                    type="button"
+                                                    disabled={
+                                                        isSubmittingDecision
+                                                        || hasReviewerResponded
+                                                        || !hasUnsavedReviewerChanges
+                                                        || reviewerGroups.some((group) => !selectedReviewerSelections[reviewerSelectionKey(group.id)])
+                                                    }
+                                                    onClick={handleSaveReviewers}
+                                                >
+                                                    {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                                                    {hasAssignedReviewers ? 'Update assignments' : 'Assign reviewers'}
+                                                </Button>
+                                            ) : (
+                                                <Button
+                                                    type="button"
+                                                    disabled={
+                                                        isSubmittingDecision
+                                                        || reviewDecision === ''
+                                                        || !assignedReviewDocumentsComplete
+                                                        || !selectedProposal.can_submit_decision
+                                                    }
+                                                    onClick={() => handleReviewDecision(reviewDecision)}
+                                                >
+                                                    {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                                                    Submit decision
+                                                </Button>
+                                            )}
                                         </div>
                                         {hasAssignedReviewers && !selectedProposal.can_submit_decision ? (
                                             <p className="text-right text-xs text-muted-foreground">
                                                 Waiting for all assigned reviewers to respond.
                                             </p>
-                                        ) : null}
-                                            </>
                                         ) : null}
                                     </section>
                                 ) : null}
