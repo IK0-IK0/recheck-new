@@ -37,6 +37,7 @@ const defaultActionInitialValues = {
     document_ids: [],
     roles: [],
     reviewer_groups: [],
+    main_reviewer: '',
     approve_action_id: null,
     deny_action_id: null,
     decision_mode: 'approve_deny',
@@ -160,6 +161,12 @@ function normalizeActionValues(actionValues = {}) {
         ...actionValues,
         roles: actionValues.roles ?? [],
         document_ids: actionValues.document_ids ?? [],
+        main_reviewer:
+            actionValues.main_reviewer ??
+            (actionValues.main_reviewer_user_id &&
+            actionValues.main_reviewer_user_type
+                ? `${actionValues.main_reviewer_user_type}:${actionValues.main_reviewer_user_id}`
+                : ''),
         reviewer_groups: normalizedReviewerGroups,
         decision_mode: actionValues.decision_mode ?? 'approve_deny',
         custom_decision_branches: actionValues.custom_decision_branches ?? [],
@@ -362,6 +369,7 @@ export default function ActionModal({
     submitLabel = 'Save',
     initialValues = defaultActionInitialValues,
     roles = [],
+    reviewerUsers = [],
     documents = [],
     actions = [],
     decisionSources = [],
@@ -504,6 +512,9 @@ export default function ActionModal({
             delete submissionValues.decision_branches;
             delete submissionValues.roles;
             delete submissionValues.reviewer_groups;
+            if (values.action_type !== 'review') {
+                delete submissionValues.main_reviewer;
+            }
             const rest = submissionValues;
             const submissionGroups = reviewerGroupsForAction;
             const roleIds = [
@@ -1191,6 +1202,59 @@ export default function ActionModal({
                             </div>
                             {values.reviewer_groups.length ? (
                                 <div className="grid gap-4">
+                                    {values.action_type === 'review' ? (
+                                        <div className="grid gap-2 rounded-xl border border-border bg-background p-4">
+                                            <Label htmlFor="main-reviewer">
+                                                Main reviewer
+                                            </Label>
+                                            <select
+                                                id="main-reviewer"
+                                                value={values.main_reviewer}
+                                                onChange={(event) =>
+                                                    setValues({
+                                                        ...values,
+                                                        main_reviewer:
+                                                            event.target.value,
+                                                    })
+                                                }
+                                                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+                                            >
+                                                <option value="">
+                                                    Select a main reviewer
+                                                </option>
+                                                {reviewerUsers
+                                                    .filter((user) =>
+                                                        values.reviewer_groups.some(
+                                                            (group) =>
+                                                                group.roleIds.some(
+                                                                    (roleId) =>
+                                                                        user.role_ids.includes(
+                                                                            roleId,
+                                                                        ),
+                                                                ),
+                                                        ),
+                                                    )
+                                                    .map((user) => {
+                                                        const value = `${user.user_type}:${user.id}`;
+
+                                                        return (
+                                                            <option
+                                                                key={value}
+                                                                value={value}
+                                                            >
+                                                                {user.name} (
+                                                                {user.email})
+                                                            </option>
+                                                        );
+                                                    })}
+                                            </select>
+                                            <p className="text-xs text-muted-foreground">
+                                                The main reviewer must belong
+                                                to a role assigned to this
+                                                review action.
+                                            </p>
+                                        </div>
+                                    ) : null}
                                     {reviewerGroupsForAction.map(
                                         (group, index) => (
                                             <div

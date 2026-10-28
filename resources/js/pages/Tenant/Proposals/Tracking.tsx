@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import PhasePipeline from '@/components/PhasePipeline';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
     DropdownMenu,
@@ -55,6 +56,24 @@ type Action = {
     documents?: { id: number; name: string; file_type: string; label: 'form' | 'doc' }[];
 };
 
+type ReviewCandidate = {
+    id: number;
+    name: string;
+    email: string;
+    user_type: string;
+    role_ids: number[];
+};
+
+type ReviewMember = {
+    id: number;
+    user_id: number;
+    user_type: string;
+    name: string;
+    decision: string | null;
+    comment: string | null;
+    responded_at: string | null;
+};
+
 type ReviewDocument = {
     id: number;
     name: string;
@@ -73,6 +92,13 @@ type Proposal = {
     user_id?: number;
     user_type?: string;
     can_review?: boolean;
+    is_main_reviewer?: boolean;
+    is_additional_reviewer?: boolean;
+    can_submit_final_decision?: boolean;
+    review_members?: ReviewMember[];
+    review_reviewer_candidates?: ReviewCandidate[];
+    assigned_reviewer_ids?: string[];
+    member_decision?: string | null;
     title: string;
     process: Process | null;
     current_phase: Phase | null;
@@ -166,6 +192,9 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
     const [draggedReviewDocumentId, setDraggedReviewDocumentId] = useState<number | null>(null);
     const [isSubmittingDecision, setIsSubmittingDecision] = useState(false);
     const [selectedReviewDecision, setSelectedReviewDecision] = useState('');
+    const [selectedMemberRecommendation, setSelectedMemberRecommendation] = useState('');
+    const [memberRecommendationComment, setMemberRecommendationComment] = useState('');
+    const [reviewerSelections, setReviewerSelections] = useState<Record<number, string[]>>({});
     const [filledReviewFormIds, setFilledReviewFormIds] = useState<number[]>([]);
     const [rejectedDocumentIds, setRejectedDocumentIds] = useState<number[]>([]);
     const [rejectedDocumentComments, setRejectedDocumentComments] = useState<
@@ -279,6 +308,17 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
     )
         ? selectedReviewDecision
         : (reviewDecisions[0]?.value ?? '');
+    const memberRecommendation = reviewDecisions.some(
+        (decision) => decision.value === selectedMemberRecommendation,
+    )
+        ? selectedMemberRecommendation
+        : (reviewDecisions[0]?.value ?? '');
+    const selectedReviewerIds = selectedProposal
+        ? reviewerSelections[selectedProposal.id] ?? selectedProposal.assigned_reviewer_ids ?? []
+        : [];
+    const assignedReviewerIds = selectedProposal?.assigned_reviewer_ids ?? [];
+    const hasUnsavedReviewerChanges = [...selectedReviewerIds].sort().join('|')
+        !== [...assignedReviewerIds].sort().join('|');
     const isRejectingReview = isRejectionOutcome(
         reviewDecision,
         reviewDecisions.find((decision) => decision.value === reviewDecision)?.label,
@@ -375,6 +415,75 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                     toast.error(
                         errors.workflow || 'Review decision failed.',
                     ),
+            },
+        );
+    };
+
+    const handleReviewerSelection = (reviewerId: string, checked: boolean | 'indeterminate') => {
+        if (!selectedProposal) {
+            return;
+        }
+
+        setReviewerSelections((current) => {
+            const selectedIds = current[selectedProposal.id]
+                ?? selectedProposal.assigned_reviewer_ids
+                ?? [];
+            const nextIds = checked === true
+                ? [...selectedIds, reviewerId]
+                : selectedIds.filter((id) => id !== reviewerId);
+
+            return { ...current, [selectedProposal.id]: nextIds };
+        });
+    };
+
+    const handleSaveReviewers = () => {
+        if (!selectedProposal?.is_main_reviewer || !hasUnsavedReviewerChanges) {
+            return;
+        }
+
+        router.put(
+            `/tenant/proposals/${selectedProposal.id}/reviewers`,
+            { reviewers: selectedReviewerIds },
+            {
+                preserveScroll: true,
+                onStart: () => setIsSubmittingDecision(true),
+                onFinish: () => setIsSubmittingDecision(false),
+                onSuccess: () => {
+                    setReviewerSelections((current) => {
+                        const next = { ...current };
+                        delete next[selectedProposal.id];
+
+                        return next;
+                    });
+                    toast.success('Additional reviewers updated.');
+
+                    router.reload({ only: ['proposals'] });
+                },
+                onError: (errors) => toast.error(errors.reviewers || 'Reviewer assignment failed.'),
+            },
+        );
+    };
+
+    const handleMemberRecommendation = () => {
+        if (!selectedProposal?.is_additional_reviewer || !memberRecommendation) {
+            return;
+        }
+
+        router.post(
+            `/tenant/proposals/${selectedProposal.id}/reviewer-response`,
+            {
+                decision: memberRecommendation,
+                comment: memberRecommendationComment.trim() || null,
+            },
+            {
+                preserveScroll: true,
+                onStart: () => setIsSubmittingDecision(true),
+                onFinish: () => setIsSubmittingDecision(false),
+                onSuccess: () => {
+                    toast.success('Recommendation submitted.');
+                    router.reload({ only: ['proposals'] });
+                },
+                onError: (errors) => toast.error(errors.decision || 'Recommendation failed.'),
             },
         );
     };
@@ -683,7 +792,9 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                             {proposal.can_review
                                                 && proposal.current_action?.action_type === 'review'
                                                 && !proposal.completed_at
-                                                ? 'Review'
+                                                ? proposal.is_additional_reviewer
+                                                    ? 'Recommend'
+                                                    : 'Review'
                                                 : 'Details'}
                                         </Button>
                                     </td>
@@ -711,6 +822,8 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                     if (!open) {
                         setSelectedProposalId(null);
                         setSelectedReviewDecision('');
+                        setSelectedMemberRecommendation('');
+                        setMemberRecommendationComment('');
                         setFilledReviewFormIds([]);
                         setRejectedDocumentIds([]);
                         setRejectedDocumentComments({});
@@ -1174,55 +1287,181 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                 </div>
                             </div>
 
-                                {selectedProposal.can_review && selectedProposal.current_action?.action_type === 'review' ? (
-                                    <div className="mt-auto flex shrink-0 flex-col gap-3 border-t border-border bg-background pt-4 sm:flex-row sm:items-end sm:justify-end">
-                                        <Select
-                                            value={reviewDecision}
-                                            onValueChange={(decision) => {
-                                                setSelectedReviewDecision(decision);
-                                                const label = reviewDecisions.find(
-                                                    (option) => option.value === decision,
-                                                )?.label;
+                                {selectedProposal.is_main_reviewer
+                                && selectedProposal.current_action?.action_type === 'review' ? (
+                                    <section className="mt-auto shrink-0 space-y-4 border-t border-border bg-background pt-4">
+                                        <div className="space-y-2">
+                                            <div>
+                                                <h3 className="text-sm font-semibold">Additional reviewers</h3>
+                                                <p className="text-xs text-muted-foreground">
+                                                    Members submit recommendations; you make the final decision after all respond.
+                                                </p>
+                                            </div>
+                                            {selectedProposal.review_reviewer_candidates?.length ? (
+                                                <div className="max-h-36 space-y-2 overflow-y-auto rounded-md border border-border p-3">
+                                                    {selectedProposal.review_reviewer_candidates.map((candidate) => {
+                                                        const reviewerId = `${candidate.user_type}:${candidate.id}`;
 
-                                                if (!isRejectionOutcome(decision, label)) {
-                                                    setRejectedDocumentIds([]);
-                                                    setRejectedDocumentComments({});
-                                                    setCommentingDocumentIds([]);
+                                                        return (
+                                                            <label key={reviewerId} className="flex items-center gap-2 text-sm">
+                                                                <Checkbox
+                                                                    checked={selectedReviewerIds.includes(reviewerId)}
+                                                                    disabled={isSubmittingDecision || (selectedProposal.review_members ?? []).some((member) => member.responded_at !== null)}
+                                                                    onCheckedChange={(checked) => handleReviewerSelection(reviewerId, checked)}
+                                                                />
+                                                                <span className="min-w-0 flex-1 truncate">{candidate.name}</span>
+                                                                <span className="truncate text-xs text-muted-foreground">{candidate.email}</span>
+                                                            </label>
+                                                        );
+                                                    })}
+                                                </div>
+                                            ) : (
+                                                <p className="text-sm text-muted-foreground">
+                                                    No eligible additional reviewers are assigned to this action.
+                                                </p>
+                                            )}
+                                            <div className="flex justify-end">
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    disabled={isSubmittingDecision || !hasUnsavedReviewerChanges || (selectedProposal.review_members ?? []).some((member) => member.responded_at !== null)}
+                                                    onClick={handleSaveReviewers}
+                                                >
+                                                    {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                                                    Save reviewers
+                                                </Button>
+                                            </div>
+                                        </div>
+                                        {(selectedProposal.review_members ?? []).length > 0 ? (
+                                            <div className="space-y-2">
+                                                <h3 className="text-sm font-semibold">Reviewer recommendations</h3>
+                                                <ul className="max-h-36 space-y-2 overflow-y-auto">
+                                                    {selectedProposal.review_members?.map((member) => {
+                                                        const decisionLabel = reviewDecisions.find(
+                                                            (decision) => decision.value === member.decision,
+                                                        )?.label;
+
+                                                        return (
+                                                            <li key={member.id} className="rounded-md border border-border px-3 py-2 text-sm">
+                                                                <div className="flex items-center justify-between gap-2">
+                                                                    <span className="font-medium">{member.name}</span>
+                                                                    <Badge variant={member.responded_at ? 'secondary' : 'outline'}>
+                                                                        {member.responded_at ? decisionLabel ?? member.decision : 'Waiting'}
+                                                                    </Badge>
+                                                                </div>
+                                                                {member.comment ? (
+                                                                    <p className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">{member.comment}</p>
+                                                                ) : null}
+                                                            </li>
+                                                        );
+                                                    })}
+                                                </ul>
+                                            </div>
+                                        ) : null}
+                                        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-end">
+                                            <Select
+                                                value={reviewDecision}
+                                                onValueChange={(decision) => {
+                                                    setSelectedReviewDecision(decision);
+                                                    const label = reviewDecisions.find(
+                                                        (option) => option.value === decision,
+                                                    )?.label;
+
+                                                    if (!isRejectionOutcome(decision, label)) {
+                                                        setRejectedDocumentIds([]);
+                                                        setRejectedDocumentComments({});
+                                                        setCommentingDocumentIds([]);
+                                                    }
+                                                }}
+                                                disabled={isSubmittingDecision || reviewDecisions.length === 0}
+                                            >
+                                                <SelectTrigger className="w-full sm:max-w-xs [&>svg]:rotate-180">
+                                                    <SelectValue placeholder="Select a final decision" />
+                                                </SelectTrigger>
+                                                <SelectContent side="top">
+                                                    {reviewDecisions.map((decision) => (
+                                                        <SelectItem key={decision.value} value={decision.value}>
+                                                            {decision.label}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                            <Button
+                                                type="button"
+                                                disabled={
+                                                    isSubmittingDecision
+                                                    || reviewDecision === ''
+                                                    || !assignedReviewDocumentsComplete
+                                                    || !selectedProposal.can_submit_final_decision
                                                 }
-                                            }}
-                                            disabled={isSubmittingDecision || reviewDecisions.length === 0}
-                                        >
-                                            <SelectTrigger className="w-full sm:max-w-xs [&>svg]:rotate-180">
-                                                <SelectValue placeholder="Select a decision" />
-                                            </SelectTrigger>
-                                            <SelectContent side="top">
-                                                {reviewDecisions.map((decision) => (
-                                                    <SelectItem
-                                                        key={decision.value}
-                                                        value={decision.value}
+                                                onClick={() => handleReviewDecision(reviewDecision)}
+                                            >
+                                                {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                                                Submit final decision
+                                            </Button>
+                                        </div>
+                                        {!selectedProposal.can_submit_final_decision ? (
+                                            <p className="text-right text-xs text-muted-foreground">
+                                                Waiting for all assigned reviewers to respond.
+                                            </p>
+                                        ) : null}
+                                    </section>
+                                ) : null}
+
+                                {selectedProposal.is_additional_reviewer
+                                && selectedProposal.current_action?.action_type === 'review' ? (
+                                    <section className="mt-auto shrink-0 space-y-3 border-t border-border bg-background pt-4">
+                                        {selectedProposal.member_decision ? (
+                                            <p className="text-sm text-muted-foreground">
+                                                Your recommendation has been submitted. The main reviewer will make the final decision.
+                                            </p>
+                                        ) : (
+                                            <>
+                                                <div>
+                                                    <h3 className="text-sm font-semibold">Your recommendation</h3>
+                                                    <p className="text-xs text-muted-foreground">
+                                                        Submit your recommendation to the main reviewer. This will not advance the proposal.
+                                                    </p>
+                                                </div>
+                                                <Select
+                                                    value={memberRecommendation}
+                                                    onValueChange={setSelectedMemberRecommendation}
+                                                    disabled={isSubmittingDecision || reviewDecisions.length === 0}
+                                                >
+                                                    <SelectTrigger className="w-full sm:max-w-xs [&>svg]:rotate-180">
+                                                        <SelectValue placeholder="Select a recommendation" />
+                                                    </SelectTrigger>
+                                                    <SelectContent side="top">
+                                                        {reviewDecisions.map((decision) => (
+                                                            <SelectItem key={decision.value} value={decision.value}>
+                                                                {decision.label}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                                <textarea
+                                                    value={memberRecommendationComment}
+                                                    onChange={(event) => setMemberRecommendationComment(event.target.value)}
+                                                    maxLength={2000}
+                                                    rows={3}
+                                                    aria-label="Recommendation comment"
+                                                    placeholder="Optional comment for the main reviewer"
+                                                    className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                                />
+                                                <div className="flex justify-end">
+                                                    <Button
+                                                        type="button"
+                                                        disabled={isSubmittingDecision || !memberRecommendation || !assignedReviewDocumentsComplete}
+                                                        onClick={handleMemberRecommendation}
                                                     >
-                                                        {decision.label}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                        <Button
-                                            type="button"
-                                            disabled={
-                                                isSubmittingDecision ||
-                                                reviewDecision === '' ||
-                                                !assignedReviewDocumentsComplete
-                                            }
-                                            onClick={() => {
-                                                handleReviewDecision(reviewDecision);
-                                            }}
-                                        >
-                                            {isSubmittingDecision ? (
-                                                <Loader2 className="mr-2 size-4 animate-spin" />
-                                            ) : null}
-                                            Confirm
-                                        </Button>
-                                    </div>
+                                                        {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                                                        Submit recommendation
+                                                    </Button>
+                                                </div>
+                                            </>
+                                        )}
+                                    </section>
                                 ) : null}
                         </>
                     ) : null}

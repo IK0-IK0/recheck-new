@@ -3,10 +3,11 @@
 use App\Http\Controllers\ProposalController;
 use App\Models\Action;
 use App\Models\Document;
-use App\Models\Phase;
 use App\Models\Permission;
+use App\Models\Phase;
 use App\Models\Process;
 use App\Models\Proposal;
+use App\Models\ProposalActionReviewer;
 use App\Models\Role;
 use App\Models\SuperadminTenantUser;
 use App\Models\User;
@@ -603,6 +604,71 @@ test('rejection reviews persist comments for flagged proposal files', function (
             'document_id' => $file->id,
             'comment' => 'The submitted file is incomplete.',
         ]]);
+});
+
+test('additional reviewers recommend without advancing and the main reviewer decides after all respond', function () {
+    $process = Process::factory()->create();
+    $phase = Phase::factory()->for($process)->create();
+    $mainReviewer = new User;
+    $mainReviewer->setAttribute($mainReviewer->getKeyName(), 1);
+    $reviewAction = Action::factory()->for($phase)->create([
+        'action_type' => 'review',
+        'decision_mode' => 'approve_deny',
+        'main_reviewer_user_id' => 1,
+        'main_reviewer_user_type' => User::class,
+    ]);
+    $proposal = Proposal::create([
+        'title' => 'Review coordination',
+        'user_id' => 3,
+        'user_type' => User::class,
+        'institution_id' => 1,
+        'process_id' => $process->id,
+        'current_phase_id' => $phase->id,
+        'current_action_id' => $reviewAction->id,
+    ]);
+    $reviewer = ProposalActionReviewer::query()->create([
+        'proposal_id' => $proposal->id,
+        'action_id' => $reviewAction->id,
+        'round' => 1,
+        'user_id' => 2,
+        'user_type' => SuperadminTenantUser::class,
+        'assigned_by_user_id' => 1,
+        'assigned_by_user_type' => User::class,
+    ]);
+    $controller = app(ProposalController::class);
+    $mainRequest = Request::create(
+        '/tenant/proposals/'.$proposal->id.'/review',
+        'POST',
+        ['decision' => 'approve'],
+    );
+    $mainRequest->setUserResolver(fn (): User => $mainReviewer);
+
+    expect(fn () => $controller->review($mainRequest, $proposal))
+        ->toThrow(ValidationException::class)
+        ->and($proposal->fresh()->current_action_id)->toBe($reviewAction->id)
+        ->and($proposal->actionTransitions()->count())->toBe(0);
+
+    $additionalReviewer = new SuperadminTenantUser;
+    $additionalReviewer->setAttribute($additionalReviewer->getKeyName(), 2);
+    $additionalReviewer->setAttribute('institution_id', 1);
+    $memberRequest = Request::create(
+        '/tenant/proposals/'.$proposal->id.'/reviewer-response',
+        'POST',
+        ['decision' => 'deny', 'comment' => 'Needs more detail.'],
+    );
+    $memberRequest->setUserResolver(fn (): SuperadminTenantUser => $additionalReviewer);
+    $controller->submitReviewerResponse($memberRequest, $proposal);
+
+    expect($reviewer->fresh()->decision)->toBe('deny')
+        ->and($reviewer->fresh()->comment)->toBe('Needs more detail.')
+        ->and($proposal->fresh()->current_action_id)->toBe($reviewAction->id)
+        ->and($proposal->actionTransitions()->count())->toBe(0);
+
+    $controller->review($mainRequest, $proposal->fresh());
+
+    expect($proposal->fresh()->current_action_id)->toBeNull()
+        ->and($proposal->fresh()->completed_at)->not->toBeNull()
+        ->and($proposal->actionTransitions()->count())->toBe(1);
 });
 
 test('uploaded proposal documents persist their required phase and document', function () {

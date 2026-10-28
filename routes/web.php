@@ -57,6 +57,8 @@ Route::middleware(['auth', 'verified'])->group(function (): void {
             Route::delete('/proposals/{proposal}/documents/{document}', 'destroyDocument')->name('tenant.proposals.documents.destroy');
             Route::post('/proposals/{proposal}/submit', 'submit')->name('tenant.proposals.submit');
             Route::post('/proposals/{proposal}/review', 'review')->name('tenant.proposals.review');
+            Route::put('/proposals/{proposal}/reviewers', 'assignReviewers')->name('tenant.proposals.reviewers.assign');
+            Route::post('/proposals/{proposal}/reviewer-response', 'submitReviewerResponse')->name('tenant.proposals.reviewers.respond');
         });
 
         Route::resource('users', Admin\UserManagementController::class)->only(['index', 'store', 'update', 'destroy']);

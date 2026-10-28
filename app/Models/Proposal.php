@@ -132,4 +132,14 @@ class Proposal extends Model
     {
         return $this->hasMany(ProposalActionTransition::class);
     }
+
+    /**
+     * The named reviewers assigned to review actions on this proposal.
+     *
+     * @return HasMany<ProposalActionReviewer, $this>
+     */
+    public function actionReviewers(): HasMany
+    {
+        return $this->hasMany(ProposalActionReviewer::class);
+    }
 }

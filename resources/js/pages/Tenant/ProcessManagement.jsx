@@ -98,6 +98,7 @@ export default function ProcessManagement({
     processes = [],
     proposals = [],
     roles = [],
+    reviewerUsers = [],
     documents = [],
 }) {
     const [selectedProposalId, setSelectedProposalId] = useState(
@@ -844,6 +845,7 @@ export default function ProcessManagement({
                     title="Add action"
                     submitLabel="Create action"
                     roles={roles}
+                    reviewerUsers={reviewerUsers}
                     documents={documents}
                     actions={selectedPhase.actions ?? []}
                     decisionSources={getDecisionSources(selectedPhase)}
@@ -866,6 +868,7 @@ export default function ProcessManagement({
                     title="Edit action"
                     submitLabel="Save changes"
                     roles={roles}
+                    reviewerUsers={reviewerUsers}
                     documents={documents}
                     actions={editingAction.phase.actions ?? []}
                     decisionSources={getDecisionSources(
@@ -896,6 +899,11 @@ export default function ProcessManagement({
                         ),
                         reviewer_groups:
                             editingAction.action.reviewer_groups ?? [],
+                        main_reviewer_user_id:
+                            editingAction.action.main_reviewer_user_id ?? null,
+                        main_reviewer_user_type:
+                            editingAction.action.main_reviewer_user_type ??
+                            null,
                         approve_action_id:
                             editingAction.action.approve_action_id ?? null,
                         deny_action_id:
