@@ -86,26 +86,32 @@ const footerNavItems: NavItem[] = [
 
 export function AppSidebar() {
     const { auth, setupStatus } = usePage().props as {
-        auth?: { user?: { role?: string }; isTenantUser?: boolean };
+        auth?: {
+            user?: { role?: string };
+            isTenantUser?: boolean;
+            permissions?: string[];
+        };
         setupStatus?: { database: boolean; storage: boolean; complete: boolean };
     };
     const isAdmin = auth?.user?.role === 'admin';
     const isInstitution = auth?.user?.role === 'institution';
+    const tenantProposalView = auth?.permissions?.includes('proposal.view.all')
+        ? 'Tracking'
+        : auth?.permissions?.includes('proposal.view.own_or_assigned')
+          ? 'Proposals'
+          : null;
     const [showSetupDialog, setShowSetupDialog] = useState(false);
     const [showProposalTestingLinks] = useProposalTestingLinks();
 
     const adminNavigationItems: NavItem[] = [
         { title: 'Dashboard', href: dashboard(), icon: LayoutGrid },
         { title: 'Institutions', href: '/admin', icon: Building2 },
-        ...(showProposalTestingLinks
-            ? mainNavItems.filter((item) => ['Proposals', 'Tracking'].includes(item.title))
-            : []),
     ];
     const navigationItems = isAdmin
         ? adminNavigationItems
         : auth?.isTenantUser
             ? mainNavItems.filter((item) => (
-                item.title === 'Dashboard' || ['Proposals', 'Tracking'].includes(item.title)
+                item.title === 'Dashboard' || item.title === tenantProposalView
             ))
             : mainNavItems.filter((item) => (
                 !['Proposals', 'Tracking'].includes(item.title)

@@ -206,10 +206,24 @@ export default function ProcessManagement({
     }, [selectedProcessId]);
 
     const handleCreateProcess = async (values) => {
+        const existingProcessIds = new Set(processes.map((process) => process.id));
         form.clearErrors();
         form.setData(values);
         await form.post('/tenant/processes', {
-            onSuccess: () => {
+            onSuccess: (page) => {
+                const createdProcess = page.props.processes.find(
+                    (process) => !existingProcessIds.has(process.id),
+                );
+
+                if (!createdProcess) {
+                    toast.error(
+                        'Process created, but could not be loaded. Please reload the page.',
+                    );
+
+                    return;
+                }
+
+                setSelectedProcessId(createdProcess.id);
                 toast.success('Process created.');
             },
             onError: () => {
@@ -439,7 +453,7 @@ export default function ProcessManagement({
     return (
         <>
             {/* Compact header similar to DatabaseSetup */}
-            <div className="flex h-full flex-col overflow-hidden">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                 {/* Header - fixed at top */}
                 <div className="bg-surface flex items-center justify-between border-b border-border px-6 py-3">
                     <div className="flex items-center gap-3">
@@ -498,7 +512,7 @@ export default function ProcessManagement({
 
                 {processes.length ? (
                     activeProcess ? (
-                        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                             {/* Phase pipeline visualization - fixed */}
                             <div className="bg-surface flex-none border-b border-border">
                                 <div className="p-4 pb-3">
@@ -550,24 +564,26 @@ export default function ProcessManagement({
                                         </div>
                                     </div>
 
-                                    <div className="-mx-4 min-w-0 rounded-xl border border-border bg-background pb-1">
-                                        <PhasePipeline
-                                            phases={activeProcess.phases ?? []}
-                                            activePhaseId={
-                                                activePhase?.id ?? null
-                                            }
-                                            onPhaseSelect={setActivePhaseId}
-                                            onAddPhase={() =>
-                                                setIsCreatePhaseOpen(true)
-                                            }
-                                            onPhaseReorder={handlePhaseReorder}
-                                        />
-                                    </div>
+                                    {phases.length > 0 ? (
+                                        <div className="-mx-4 min-w-0 rounded-xl border border-border bg-background pb-1">
+                                            <PhasePipeline
+                                                phases={phases}
+                                                activePhaseId={
+                                                    activePhase?.id ?? null
+                                                }
+                                                onPhaseSelect={setActivePhaseId}
+                                                onAddPhase={() =>
+                                                    setIsCreatePhaseOpen(true)
+                                                }
+                                                onPhaseReorder={handlePhaseReorder}
+                                            />
+                                        </div>
+                                    ) : null}
                                 </div>
                             </div>
 
                             {/* Actions flow graph - fills remaining space */}
-                            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                                 <div className="bg-surface flex flex-none items-center justify-between border-border px-4 py-3">
                                     <div>
                                         <p className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
@@ -621,23 +637,10 @@ export default function ProcessManagement({
                                                 Delete phase
                                             </Button>
                                         </div>
-                                    ) : phases.length === 0 ? (
-                                        <Button
-                                            variant="default"
-                                            size="sm"
-                                            onClick={() =>
-                                                setIsCreatePhaseOpen(true)
-                                            }
-                                            type="button"
-                                            className="h-7 text-xs"
-                                        >
-                                            <Plus className="size-3.5" /> Add
-                                            first phase
-                                        </Button>
                                     ) : null}
                                 </div>
 
-                                <div className="min-h-0 flex-1">
+                                <div className="min-h-0 min-w-0 flex-1">
                                     {activePhase ? (
                                         <ActionsFlowGraph
                                             key={activePhase.id}

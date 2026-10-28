@@ -9,7 +9,7 @@ export default function ProposalTestingToggle() {
     };
     const [enabled, setEnabled] = useProposalTestingLinks();
 
-    if (!['admin', 'institution'].includes(auth?.user?.role ?? '')) {
+    if (auth?.user?.role !== 'institution') {
         return null;
     }
 

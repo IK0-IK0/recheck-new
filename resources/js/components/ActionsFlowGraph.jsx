@@ -32,8 +32,8 @@ function ActionNode({ data, selected }) {
     const isReview = data.action_type === 'review';
 
     return (
-        <div 
-            className={`rounded-xl border-2 bg-surface shadow-lg min-w-[280px] ${
+        <div
+            className={`w-[280px] max-w-[calc(100vw_-_3rem)] min-w-0 rounded-xl border-2 bg-surface shadow-lg ${
                 selected 
                     ? 'border-primary shadow-2xl scale-105 cursor-grabbing'
                     : 'border-border hover:shadow-xl hover:border-primary/50 cursor-grab'
@@ -69,7 +69,7 @@ function ActionNode({ data, selected }) {
                 {/* Description with label and background */}
                 <div className="rounded-lg bg-muted px-3 py-2">
                     <p className="text-xs font-semibold text-foreground mb-1">Description:</p>
-                    <p className="text-xs text-foreground">
+                    <p className="break-words text-xs text-foreground">
                         {data.description ? data.description : <span className="italic text-muted-foreground">None</span>}
                     </p>
                 </div>
@@ -80,7 +80,7 @@ function ActionNode({ data, selected }) {
                         <p className="text-xs font-semibold text-foreground mb-1">Actor:</p>
                         <div className="flex flex-wrap gap-1">
                             {data.roles.map((role, index) => (
-                                <span key={role.id || index} className="text-xs text-foreground">
+                                <span key={role.id || index} className="break-words text-xs text-foreground">
                                     {role.name}{index < data.roles.length - 1 ? ',' : ''}
                                 </span>
                             ))}
@@ -114,8 +114,8 @@ function ActionNode({ data, selected }) {
                                     className="size-2 shrink-0 rounded-full"
                                     style={{ backgroundColor: branch.color }}
                                 />
-                                <span className="truncate font-medium text-foreground">{branch.label}</span>
-                                <span className="truncate text-muted-foreground">{branch.destination_label}</span>
+                                <span className="min-w-0 truncate font-medium text-foreground">{branch.label}</span>
+                                <span className="min-w-0 truncate text-muted-foreground">{branch.destination_label}</span>
                             </div>
                         ))}
                         {data.decision_branches.some((branch) => branch.type === 'custom') ? (
