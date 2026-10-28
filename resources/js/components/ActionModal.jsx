@@ -437,10 +437,34 @@ export default function ActionModal({
             },
         ];
     };
+    const buildReviewerGroups = (reviewerGroups) =>
+        reviewerGroups.map((group) => {
+            const existingSets = new Map(
+                group.decisionDocumentSets.map((set) => [
+                    `${set.actionId}:${set.decisionId}`,
+                    set,
+                ]),
+            );
+
+            return {
+                ...group,
+                decisionDocumentSets: decisionSources.flatMap((source) =>
+                    source.outcomes.map(
+                        (outcome) =>
+                            existingSets.get(`${source.id}:${outcome.id}`) ?? {
+                                actionId: source.id,
+                                decisionId: outcome.id,
+                                documentIds: [],
+                                roleIds: [],
+                            },
+                    ),
+                ),
+            };
+        });
     const reviewerGroupsForAction =
         values.action_type === 'submit'
             ? buildSubmissionGroups(values.reviewer_groups)
-            : values.reviewer_groups;
+            : buildReviewerGroups(values.reviewer_groups);
     const activeDocumentSetExists =
         activeDocumentSet === 'all' ||
         reviewerGroupsForAction[0]?.decisionDocumentSets.some(
@@ -611,7 +635,6 @@ export default function ActionModal({
 
     const toggleGroupDocument = (group, documentId) => {
         if (
-            values.action_type === 'submit' &&
             activeDocumentSetForDisplay !== 'all'
         ) {
             updateReviewerGroup(group.id, {
@@ -666,10 +689,10 @@ export default function ActionModal({
         updateDecisionSetRole(group, roleId);
     };
 
-    const clearActiveSubmissionSet = (group) => {
+    const clearActiveDocumentSet = (group) => {
         if (activeDocumentSetForDisplay === 'all') {
             updateReviewerGroup(group.id, {
-                roleIds: [],
+                ...(values.action_type === 'submit' ? { roleIds: [] } : {}),
                 documentIds: [],
             });
 
@@ -1215,8 +1238,8 @@ export default function ActionModal({
                                                 ) : null}
                                                 <div
                                                     className={
-                                                        values.action_type ===
-                                                        'submit'
+                                                        values.action_type === 'submit' ||
+                                                        decisionSources.length > 0
                                                             ? 'grid grid-cols-[minmax(0,1fr)_minmax(8rem,14rem)] items-center gap-3'
                                                             : 'flex items-center gap-3'
                                                     }
@@ -1236,8 +1259,8 @@ export default function ActionModal({
                                                         aria-label={`Assignment ${index + 1} name`}
                                                         className="h-9"
                                                     />
-                                                    {values.action_type ===
-                                                    'submit' ? (
+                                                    {values.action_type === 'submit' ||
+                                                    decisionSources.length > 0 ? (
                                                         <Select
                                                             value={
                                                                 activeDocumentSetForDisplay
@@ -1247,10 +1270,12 @@ export default function ActionModal({
                                                             }
                                                         >
                                                             <SelectTrigger
-                                                                aria-label="Submission assignment set"
+                                                                aria-label={values.action_type === 'submit'
+                                                                    ? 'Submission assignment set'
+                                                                    : 'Reviewer document outcome'}
                                                                 className="h-9 w-full"
                                                             >
-                                                                <SelectValue placeholder="Choose document and role set" />
+                                                                <SelectValue placeholder="Choose document and outcome set" />
                                                             </SelectTrigger>
                                                             <SelectContent className="custom-scrollbar max-h-48">
                                                                 <SelectItem value="all">
@@ -1371,7 +1396,7 @@ export default function ActionModal({
                                                     ) : null}
                                                 </div>
                                                 {values.action_type ===
-                                                'submit' ? (
+                                                    'submit' || decisionSources.length > 0 ? (
                                                     <div className="grid gap-4">
                                                         <div className="flex items-center justify-between gap-3">
                                                             <Label>
@@ -1384,21 +1409,14 @@ export default function ActionModal({
                                                                 size="sm"
                                                                 className="h-8 gap-1.5 px-2 text-muted-foreground"
                                                                 onClick={() =>
-                                                                    clearActiveSubmissionSet(
+                                                                    clearActiveDocumentSet(
                                                                         group,
                                                                     )
                                                                 }
                                                                 disabled={
-                                                                    activeDocumentSetForDisplay ===
-                                                                    'all'
-                                                                        ? group
-                                                                              .roleIds
-                                                                              .length ===
-                                                                              0 &&
-                                                                          group
-                                                                              .documentIds
-                                                                              .length ===
-                                                                              0
+                                                                    activeDocumentSetForDisplay === 'all'
+                                                                        ? group.documentIds.length === 0 &&
+                                                                          (values.action_type !== 'submit' || group.roleIds.length === 0)
                                                                         : !group.decisionDocumentSets.some(
                                                                               (
                                                                                   set,
@@ -1502,8 +1520,6 @@ export default function ActionModal({
                                                             label="Documents for this group"
                                                             items={documents}
                                                             selectedIds={
-                                                                values.action_type ===
-                                                                    'submit' &&
                                                                 activeDocumentSetForDisplay !==
                                                                     'all'
                                                                     ? (group.decisionDocumentSets.find(
@@ -1526,10 +1542,7 @@ export default function ActionModal({
                                                                 )
                                                             }
                                                             placeholder={
-                                                                values.action_type ===
-                                                                'submit'
-                                                                    ? 'Choose documents'
-                                                                    : 'Choose optional documents'
+                                                                'Choose documents'
                                                             }
                                                             openDirection="up"
                                                         />
@@ -1543,7 +1556,7 @@ export default function ActionModal({
                                 <div className="rounded-lg border border-dashed border-border p-5 text-sm leading-relaxed text-muted-foreground">
                                     {values.action_type === 'submit'
                                         ? 'Configure the default documents and any outcome-specific documents for this submission.'
-                                        : 'Add a reviewer group, then choose a role and the documents it needs.'}
+                                        : 'Add a reviewer group, then choose its role, required documents, and any outcome-specific documents.'}
                                 </div>
                             )}
                         </section>

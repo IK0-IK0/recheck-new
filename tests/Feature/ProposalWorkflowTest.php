@@ -463,6 +463,15 @@ test('review decisions follow the configured action route and are recorded', fun
 test('institution accounts must assign additional reviewers before making a decision', function () {
     $process = Process::factory()->create();
     $phase = Phase::factory()->for($process)->create();
+    $sourceReviewAction = Action::factory()->for($phase)->create([
+        'action_type' => 'review',
+        'decision_mode' => 'custom',
+        'custom_decision_branches' => [
+            ['id' => 'accepted', 'label' => 'Accepted', 'destination' => 'next'],
+            ['id' => 'revised', 'label' => 'Needs revision', 'destination' => 'next'],
+        ],
+        'order' => 1,
+    ]);
     $reviewerRole = Role::factory()->create();
     $otherReviewerRole = Role::factory()->create();
     $assignedReviewer = TenantUser::query()->create([
@@ -482,19 +491,45 @@ test('institution accounts must assign additional reviewers before making a deci
         'name' => 'Other reviewer file',
         'label' => 'doc',
     ]);
+    $acceptedDocument = Document::factory()->create([
+        'name' => 'Accepted-only reviewer file',
+        'label' => 'doc',
+    ]);
+    $revisedDocument = Document::factory()->create([
+        'name' => 'Revised-only reviewer file',
+        'label' => 'doc',
+    ]);
     $reviewAction = Action::factory()->for($phase)->create([
         'action_type' => 'review',
         'decision_mode' => 'approve_deny',
+        'order' => 2,
         'reviewer_groups' => [[
             'id' => 'reviewer',
             'name' => 'Reviewer',
             'role_ids' => [$reviewerRole->id],
             'document_ids' => [$mainReviewerDocument->id],
+            'decision_document_sets' => [
+                [
+                    'action_id' => $sourceReviewAction->id,
+                    'decision_id' => 'accepted',
+                    'document_ids' => [$acceptedDocument->id],
+                ],
+                [
+                    'action_id' => $sourceReviewAction->id,
+                    'decision_id' => 'revised',
+                    'document_ids' => [$revisedDocument->id],
+                ],
+            ],
         ], [
             'id' => 'other-reviewer',
             'name' => 'Other reviewer',
             'role_ids' => [$otherReviewerRole->id],
             'document_ids' => [$otherReviewerDocument->id],
+            'decision_document_sets' => [[
+                'action_id' => $sourceReviewAction->id,
+                'decision_id' => 'accepted',
+                'document_ids' => [$otherReviewerDocument->id],
+            ]],
         ]],
     ]);
     $proposal = Proposal::create([
@@ -505,6 +540,10 @@ test('institution accounts must assign additional reviewers before making a deci
         'process_id' => $process->id,
         'current_phase_id' => $phase->id,
         'current_action_id' => $reviewAction->id,
+    ]);
+    $proposal->actionTransitions()->create([
+        'action_id' => $sourceReviewAction->id,
+        'decision' => 'accepted',
     ]);
     $request = proposalRequestAsOwner(
         Request::create('/tenant/proposals/'.$proposal->id.'/review', 'POST', ['decision' => 'approve']),
@@ -526,8 +565,8 @@ test('institution accounts must assign additional reviewers before making a deci
         ->and($trackingProps['proposals'][0]['can_submit_decision'])->toBeFalse()
         ->and(collect($trackingProps['proposals'][0]['review_reviewer_candidates'])->pluck('name')->all())
         ->toContain('Eligible reviewer')
-        ->and(collect($trackingProps['proposals'][0]['review_documents'])->pluck('id')->all())
-        ->toBe([$mainReviewerDocument->id]);
+        ->and(collect($trackingProps['proposals'][0]['review_documents'])->pluck('id')->sort()->values()->all())
+        ->toBe(collect([$mainReviewerDocument->id, $acceptedDocument->id])->sort()->values()->all());
 
     expect(fn () => app(ProposalController::class)->review($request, $proposal))
         ->toThrow(ValidationException::class);

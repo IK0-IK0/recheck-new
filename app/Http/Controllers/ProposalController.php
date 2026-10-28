@@ -191,7 +191,7 @@ class ProposalController extends Controller
             );
 
             $reviewDocumentIds = $canReview && $currentAction
-                ? $this->reviewerAssignedDocumentIds($request, $currentAction)
+                ? $this->reviewerAssignedDocumentIds($request, $proposal, $currentAction)
                 : [];
             $proposal->setAttribute(
                 'review_documents',
@@ -1578,7 +1578,7 @@ class ProposalController extends Controller
      *
      * @return list<int>
      */
-    private function reviewerAssignedDocumentIds(Request $request, Action $action): array
+    private function reviewerAssignedDocumentIds(Request $request, Proposal $proposal, Action $action): array
     {
         $reviewerGroups = collect($action->reviewer_groups ?? []);
 
@@ -1589,15 +1589,38 @@ class ProposalController extends Controller
                 ->all();
         }
 
-        if ($this->mainReviewerRoleId($action) !== null && $this->isMainReviewer($request, $action)) {
-            return collect($reviewerGroups->first()['document_ids'] ?? [])
+        $mostRecentDecision = $proposal->actionTransitions()
+            ->whereNotNull('decision')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->first(['action_id', 'decision']);
+        $groupDocumentIds = fn (array $group): array => [
+            ...array_map('intval', $group['document_ids'] ?? []),
+            ...collect($group['decision_document_sets'] ?? [])
+                ->filter(fn (array $set): bool => $mostRecentDecision !== null
+                    && (int) ($set['action_id'] ?? 0) === (int) $mostRecentDecision->action_id
+                    && (string) ($set['decision_id'] ?? '') === (string) $mostRecentDecision->decision)
+                ->flatMap(fn (array $set): array => $set['document_ids'] ?? [])
                 ->map(fn ($id): int => (int) $id)
-                ->unique()
-                ->all();
+                ->all(),
+        ];
+
+        if ($this->mainReviewerRoleId($action) !== null && $this->isMainReviewer($request, $action)) {
+            $mainReviewerGroup = $reviewerGroups->first();
+
+            return $mainReviewerGroup === null
+                ? []
+                : array_values(array_unique($groupDocumentIds($mainReviewerGroup)));
         }
 
         $allGroupDocumentIds = $reviewerGroups
-            ->flatMap(fn (array $group): array => $group['document_ids'] ?? [])
+            ->flatMap(fn (array $group): array => [
+                ...array_map('intval', $group['document_ids'] ?? []),
+                ...collect($group['decision_document_sets'] ?? [])
+                    ->flatMap(fn (array $set): array => $set['document_ids'] ?? [])
+                    ->map(fn ($id): int => (int) $id)
+                    ->all(),
+            ])
             ->map(fn ($id): int => (int) $id)
             ->unique()
             ->values();
@@ -1608,7 +1631,7 @@ class ProposalController extends Controller
                     $userRoleIds,
                     array_map('intval', $group['role_ids'] ?? []),
                 ) !== [])
-            ->flatMap(fn (array $group): array => $group['document_ids'] ?? [])
+            ->flatMap(fn (array $group): array => $groupDocumentIds($group))
             ->map(fn ($id): int => (int) $id)
             ->all();
         $actionRoleIds = $action->roles()
@@ -1661,7 +1684,7 @@ class ProposalController extends Controller
                 && $this->userCanAccessReviewProposal($request, $proposal, $action)
                 && in_array(
                     $requiredDocumentId,
-                    $this->reviewerAssignedDocumentIds($request, $action),
+                    $this->reviewerAssignedDocumentIds($request, $proposal, $action),
                     true,
                 ),
             403,

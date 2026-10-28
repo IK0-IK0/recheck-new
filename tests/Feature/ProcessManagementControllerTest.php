@@ -368,6 +368,52 @@ test('submission outcome document sets persist and join the action document requ
         ->toBe(collect([$allDocument->id, $outcomeDocument->id])->sort()->values()->all());
 });
 
+test('reviewer group outcome document sets persist and join the action requirements', function (): void {
+    $process = Process::factory()->create();
+    $phase = Phase::factory()->for($process)->create();
+    $sourceAction = Action::factory()->for($phase)->create([
+        'action_type' => 'review',
+        'decision_mode' => 'custom',
+        'custom_decision_branches' => [
+            ['id' => 'accepted', 'label' => 'Accepted', 'destination' => 'next'],
+        ],
+        'order' => 1,
+    ]);
+    $reviewerRole = Role::factory()->create();
+    $allDocument = Document::factory()->create();
+    $outcomeDocument = Document::factory()->create();
+    $reviewerGroups = [[
+        'id' => 'main-reviewer',
+        'name' => 'Main reviewer',
+        'role_ids' => [$reviewerRole->id],
+        'document_ids' => [$allDocument->id],
+        'decision_document_sets' => [[
+            'action_id' => $sourceAction->id,
+            'decision_id' => 'accepted',
+            'document_ids' => [$outcomeDocument->id],
+        ]],
+    ]];
+
+    (new ProcessManagementController)->storeAction(
+        Request::create('/actions', 'POST', [
+            'name' => 'Review documents',
+            'action_type' => 'review',
+            'reviewer_groups' => $reviewerGroups,
+        ]),
+        $phase,
+    );
+
+    $reviewAction = $phase->actions()
+        ->where('name', 'Review documents')
+        ->firstOrFail();
+
+    expect($reviewAction->reviewer_groups)->toBe($reviewerGroups)
+        ->and($reviewAction->roles()->pluck('roles.id')->all())
+        ->toBe([$reviewerRole->id])
+        ->and($reviewAction->documents()->pluck('documents.id')->sort()->values()->all())
+        ->toBe(collect([$allDocument->id, $outcomeDocument->id])->sort()->values()->all());
+});
+
 // ---------------------------------------------------------------------------
 // Property 2: Phase Reorder Consistency
 //

@@ -322,9 +322,7 @@ class ProcessManagementController extends Controller
                     $fail('The selected document is invalid.');
                 }
             }],
-            'reviewer_groups.*.decision_document_sets' => $request->input('action_type') === 'submit'
-                ? ['sometimes', 'array']
-                : ['prohibited'],
+            'reviewer_groups.*.decision_document_sets' => ['sometimes', 'array'],
             'reviewer_groups.*.decision_document_sets.*.action_id' => $this->decisionSetActionRules($phase, null),
             'reviewer_groups.*.decision_document_sets.*.decision_id' => $this->decisionSetOutcomeRules($request),
             'reviewer_groups.*.decision_document_sets.*.role_ids' => ['sometimes', 'array', 'max:1'],
@@ -421,9 +419,7 @@ class ProcessManagementController extends Controller
                     $fail('The selected document is invalid.');
                 }
             }],
-            'reviewer_groups.*.decision_document_sets' => $request->input('action_type') === 'submit'
-                ? ['sometimes', 'array']
-                : ['prohibited'],
+            'reviewer_groups.*.decision_document_sets' => ['sometimes', 'array'],
             'reviewer_groups.*.decision_document_sets.*.action_id' => $this->decisionSetActionRules($action->phase, $action),
             'reviewer_groups.*.decision_document_sets.*.decision_id' => $this->decisionSetOutcomeRules($request),
             'reviewer_groups.*.decision_document_sets.*.role_ids' => ['sometimes', 'array', 'max:1'],
