@@ -114,32 +114,70 @@ class ProposalController extends Controller
                 fn (ProposalActionReviewer $reviewer): bool => (int) $reviewer->user_id === $currentIdentity['user_id']
                     && $reviewer->user_type === $currentIdentity['user_type'],
             );
+            $reviewGroups = collect($currentAction?->reviewer_groups ?? []);
+            $subReviewerGroups = $reviewGroups->skip(1)->values();
             $hasMainReviewerRole = $currentAction !== null
                 && $this->mainReviewerRoleId($currentAction) !== null;
             $canReview = $currentAction?->action_type === 'review'
                 && ($hasMainReviewerRole
                     ? $isMainReviewer || $currentAssignment !== null
                     : $this->userCanReviewAction($request, $currentAction));
-            $mainReviewerRoleId = $currentAction?->action_type === 'review'
-                ? $reviewAssignments->mainReviewerRoleId($currentAction)
-                : null;
+            $reviewerGroups = $subReviewerGroups->map(function (array $group) use (
+                $isMainReviewer,
+                $reviewAssignments,
+                $request,
+                $reviewerAssignments,
+            ): array {
+                $roleId = isset($group['role_ids'][0]) ? (int) $group['role_ids'][0] : null;
+                $groupId = (string) ($group['id'] ?? '');
+                $assignment = $reviewerAssignments->first(
+                    fn (ProposalActionReviewer $reviewer): bool => $reviewer->reviewer_group_id === $groupId,
+                );
+                $candidates = $isMainReviewer && $roleId !== null
+                    ? $reviewAssignments->usersForRoles($request, [$roleId])
+                    : [];
+
+                return [
+                    'id' => $groupId,
+                    'name' => (string) ($group['name'] ?? 'Reviewer group'),
+                    'role_id' => $roleId,
+                    'candidates' => array_values(array_filter(
+                        $candidates,
+                        fn (array $candidate): bool => $candidate['id'] !== (int) $request->user()->getKey()
+                            || $candidate['user_type'] !== $request->user()::class,
+                    )),
+                    'assigned_reviewer_id' => $assignment === null
+                        ? null
+                        : $assignment->user_type.':'.$assignment->user_id,
+                ];
+            });
+            $requiredGroupIds = $reviewerGroups->pluck('id')->all();
+            $areAllSubGroupsAssigned = $reviewerGroups->every(
+                fn (array $group): bool => $group['assigned_reviewer_id'] !== null,
+            );
             $canSubmitDecision = $isMainReviewer
-                && ($mainReviewerRoleId === null
-                    || ($reviewerAssignments->isNotEmpty()
-                        && $reviewerAssignments->every(
-                            fn (ProposalActionReviewer $reviewer): bool => $reviewer->responded_at !== null,
-                        )));
-            $reviewCandidates = $mainReviewerRoleId === null
-                ? []
-                : $reviewAssignments->usersForRoles($request, [$mainReviewerRoleId]);
-            $reviewerNames = collect($reviewCandidates)->keyBy(
+                && $areAllSubGroupsAssigned
+                && $reviewerAssignments
+                    ->filter(fn (ProposalActionReviewer $reviewer): bool => in_array(
+                        $reviewer->reviewer_group_id,
+                        $requiredGroupIds,
+                        true,
+                    ))
+                    ->every(fn (ProposalActionReviewer $reviewer): bool => $reviewer->responded_at !== null);
+            $reviewerCandidates = $reviewerGroups->flatMap(
+                fn (array $group): array => $group['candidates'],
+            );
+            $reviewerNames = $reviewerCandidates->keyBy(
                 fn (array $candidate): string => $candidate['user_type'].':'.$candidate['id'],
+            );
+            $reviewGroupNames = $reviewGroups->keyBy('id')->map(
+                fn (array $group): string => (string) ($group['name'] ?? 'Reviewer group'),
             );
             $proposal->setAttribute(
                 'is_main_reviewer',
                 $isMainReviewer,
             );
-            $proposal->setAttribute('requires_additional_reviewers', $mainReviewerRoleId !== null);
+            $proposal->setAttribute('requires_additional_reviewers', $reviewGroups->count() > 1);
             $proposal->setAttribute(
                 'is_additional_reviewer',
                 $currentAssignment !== null,
@@ -148,13 +186,18 @@ class ProposalController extends Controller
             $proposal->setAttribute(
                 'review_members',
                 $isMainReviewer
-                    ? $reviewerAssignments->map(function (ProposalActionReviewer $reviewer) use ($reviewerNames): array {
+                    ? $reviewerAssignments->map(function (ProposalActionReviewer $reviewer) use ($reviewerNames, $reviewGroupNames): array {
                         $candidate = $reviewerNames->get($reviewer->user_type.':'.$reviewer->user_id);
 
                         return [
                             'id' => $reviewer->id,
                             'user_id' => (int) $reviewer->user_id,
                             'user_type' => $reviewer->user_type,
+                            'reviewer_group_id' => $reviewer->reviewer_group_id,
+                            'reviewer_group_name' => $reviewGroupNames->get(
+                                $reviewer->reviewer_group_id,
+                                'Reviewer group',
+                            ),
                             'name' => $candidate['name'] ?? 'Assigned reviewer',
                             'decision' => $reviewer->decision,
                             'comment' => $reviewer->comment,
@@ -164,22 +207,8 @@ class ProposalController extends Controller
                     : [],
             );
             $proposal->setAttribute(
-                'review_reviewer_candidates',
-                $isMainReviewer
-                    ? array_values(array_filter(
-                        $reviewCandidates,
-                        fn (array $candidate): bool => $candidate['id'] !== (int) $request->user()->getKey()
-                            || $candidate['user_type'] !== $request->user()::class,
-                    ))
-                    : [],
-            );
-            $proposal->setAttribute(
-                'assigned_reviewer_ids',
-                $isMainReviewer
-                    ? $reviewerAssignments->map(
-                        fn (ProposalActionReviewer $reviewer): string => $reviewer->user_type.':'.$reviewer->user_id,
-                    )->all()
-                    : [],
+                'review_reviewer_groups',
+                $isMainReviewer ? $reviewerGroups->values()->all() : [],
             );
             $proposal->setAttribute(
                 'member_decision',
@@ -1023,32 +1052,56 @@ class ProposalController extends Controller
         abort_unless($this->isMainReviewer($request, $action), 403);
 
         $validated = $request->validate([
-            'reviewers' => ['required', 'array', 'min:1', 'max:20'],
-            'reviewers.*' => ['required', 'string', 'distinct'],
+            'assignments' => ['required', 'array', 'min:1', 'max:20'],
+            'assignments.*.reviewer_group_id' => ['required', 'string', 'distinct'],
+            'assignments.*.reviewer' => ['required', 'string'],
         ]);
-        $mainRoleId = $reviewAssignments->mainReviewerRoleId($action);
-        abort_unless($mainRoleId !== null, 409);
-        $eligibleReviewers = collect($reviewAssignments->usersForRoles(
-            $request,
-            [$mainRoleId],
-        ))->keyBy(fn (array $candidate): string => $candidate['user_type'].':'.$candidate['id']);
-        $mainReviewer = $reviewAssignments->identity($request);
+        $subReviewerGroups = collect($action->reviewer_groups ?? [])->skip(1)->values();
+        abort_unless($subReviewerGroups->isNotEmpty(), 409);
+        $assignments = collect($validated['assignments']);
+        $submittedGroupIds = $assignments->pluck('reviewer_group_id')->sort()->values()->all();
+        $expectedGroupIds = $subReviewerGroups->map(
+            fn (array $group): string => (string) ($group['id'] ?? ''),
+        );
 
-        foreach ($validated['reviewers'] as $reviewerId) {
+        if ($submittedGroupIds !== $expectedGroupIds->sort()->values()->all()) {
+            throw ValidationException::withMessages([
+                'assignments' => 'Assign exactly one reviewer to every additional reviewer group.',
+            ]);
+        }
+
+        $mainReviewer = $reviewAssignments->identity($request);
+        $seenReviewerIds = [];
+        $validatedAssignments = [];
+
+        foreach ($subReviewerGroups as $group) {
+            $groupId = (string) $group['id'];
+            $roleId = (int) ($group['role_ids'][0] ?? 0);
+            $assignment = $assignments->firstWhere('reviewer_group_id', $groupId);
+            $reviewerId = $assignment['reviewer'];
+            $eligibleReviewers = collect($reviewAssignments->usersForRoles($request, [$roleId]))
+                ->keyBy(fn (array $candidate): string => $candidate['user_type'].':'.$candidate['id']);
             $candidate = $eligibleReviewers->get($reviewerId);
 
             if (
                 $candidate === null
-                || ($candidate['id'] === $mainReviewer['user_id']
-                    && $candidate['user_type'] === $mainReviewer['user_type'])
+                || ($candidate['id'] === $mainReviewer['user_id'] && $candidate['user_type'] === $mainReviewer['user_type'])
+                || in_array($reviewerId, $seenReviewerIds, true)
             ) {
                 throw ValidationException::withMessages([
-                    'reviewers' => 'Choose additional reviewers from the main reviewer role.',
+                    'assignments' => 'Choose one different user from the role configured for each reviewer group.',
                 ]);
             }
+
+            $seenReviewerIds[] = $reviewerId;
+            $validatedAssignments[] = [
+                'reviewer_group_id' => $groupId,
+                'user_id' => $candidate['id'],
+                'user_type' => $candidate['user_type'],
+            ];
         }
 
-        DB::connection('tenant')->transaction(function () use ($request, $proposal, $action, $validated, $mainReviewer): void {
+        DB::connection('tenant')->transaction(function () use ($request, $proposal, $action, $validatedAssignments, $mainReviewer): void {
             $lockedProposal = Proposal::query()
                 ->whereKey($proposal->id)
                 ->lockForUpdate()
@@ -1072,7 +1125,7 @@ class ProposalController extends Controller
 
             if ($existingReviewers->contains(fn (ProposalActionReviewer $reviewer): bool => $reviewer->responded_at !== null)) {
                 throw ValidationException::withMessages([
-                    'reviewers' => 'Reviewers cannot be changed after a member has responded.',
+                    'assignments' => 'Reviewers cannot be changed after a member has responded.',
                 ]);
             }
 
@@ -1082,15 +1135,14 @@ class ProposalController extends Controller
                 ->where('round', $round)
                 ->delete();
 
-            foreach ($validated['reviewers'] as $reviewerId) {
-                [$userType, $userId] = explode(':', $reviewerId, 2);
-
+            foreach ($validatedAssignments as $assignment) {
                 ProposalActionReviewer::query()->create([
                     'proposal_id' => $lockedProposal->id,
                     'action_id' => $action->id,
                     'round' => $round,
-                    'user_id' => (int) $userId,
-                    'user_type' => $userType,
+                    'reviewer_group_id' => $assignment['reviewer_group_id'],
+                    'user_id' => $assignment['user_id'],
+                    'user_type' => $assignment['user_type'],
                     'assigned_by_user_id' => $mainReviewer['user_id'],
                     'assigned_by_user_type' => $mainReviewer['user_type'],
                 ]);
@@ -1179,20 +1231,24 @@ class ProposalController extends Controller
             403,
         );
 
-        if ($hasMainReviewerRole) {
+        $requiredReviewerGroupIds = $this->subReviewerGroupIds($action);
+
+        if ($requiredReviewerGroupIds !== []) {
             $reviewRound = $this->currentReviewRound($proposal, $action);
             $reviewers = ProposalActionReviewer::query()
                 ->where('proposal_id', $proposal->id)
                 ->where('action_id', $action->id)
-                ->where('round', $reviewRound);
+                ->where('round', $reviewRound)
+                ->whereIn('reviewer_group_id', $requiredReviewerGroupIds);
+            $assignedGroupIds = (clone $reviewers)->distinct()->pluck('reviewer_group_id')->all();
 
-            if (! $reviewers->exists()) {
+            if (array_diff($requiredReviewerGroupIds, $assignedGroupIds) !== []) {
                 throw ValidationException::withMessages([
-                    'decision' => 'Assign at least one additional reviewer before submitting your decision.',
+                    'decision' => 'Assign one reviewer to every sub-review group before submitting your decision.',
                 ]);
             }
 
-            if ($reviewers->exists() && (clone $reviewers)->whereNull('responded_at')->exists()) {
+            if ((clone $reviewers)->whereNull('responded_at')->exists()) {
                 throw ValidationException::withMessages([
                     'decision' => 'Wait until every assigned reviewer has submitted a recommendation.',
                 ]);
@@ -1247,7 +1303,8 @@ class ProposalController extends Controller
             }
 
             if ($action->action_type === 'review') {
-                if ($this->mainReviewerRoleId($action) !== null) {
+                $requiredReviewerGroupIds = $this->subReviewerGroupIds($action);
+                if ($requiredReviewerGroupIds !== []) {
                     if (! $this->isMainReviewer($request, $action)) {
                         return ['error' => 'Only the main reviewer can submit this decision.'];
                     }
@@ -1256,12 +1313,14 @@ class ProposalController extends Controller
                     $reviewers = ProposalActionReviewer::query()
                         ->where('proposal_id', $lockedProposal->id)
                         ->where('action_id', $action->id)
-                        ->where('round', $round);
-                    if (! $reviewers->exists()) {
-                        return ['error' => 'Assign at least one additional reviewer before submitting your decision.'];
+                        ->where('round', $round)
+                        ->whereIn('reviewer_group_id', $requiredReviewerGroupIds);
+                    $assignedGroupIds = (clone $reviewers)->distinct()->pluck('reviewer_group_id')->all();
+                    if (array_diff($requiredReviewerGroupIds, $assignedGroupIds) !== []) {
+                        return ['error' => 'Assign one reviewer to every sub-review group before submitting your decision.'];
                     }
 
-                    if ($reviewers->exists() && (clone $reviewers)->whereNull('responded_at')->exists()) {
+                    if ((clone $reviewers)->whereNull('responded_at')->exists()) {
                         return ['error' => 'Wait until every assigned reviewer has submitted a recommendation.'];
                     }
                 } elseif (! $this->userCanReviewAction($request, $action)) {
@@ -1504,6 +1563,19 @@ class ProposalController extends Controller
         return is_numeric($roleId) ? (int) $roleId : null;
     }
 
+    /**
+     * @return list<string>
+     */
+    private function subReviewerGroupIds(Action $action): array
+    {
+        return collect($action->reviewer_groups ?? [])
+            ->skip(1)
+            ->map(fn (array $group): string => (string) ($group['id'] ?? ''))
+            ->filter(fn (string $groupId): bool => $groupId !== '')
+            ->values()
+            ->all();
+    }
+
     private function isMainReviewer(Request $request, Action $action): bool
     {
         $mainReviewerRoleId = $this->mainReviewerRoleId($action);
@@ -1611,6 +1683,27 @@ class ProposalController extends Controller
             return $mainReviewerGroup === null
                 ? []
                 : array_values(array_unique($groupDocumentIds($mainReviewerGroup)));
+        }
+
+        $identity = [
+            'user_id' => (int) $request->user()->getKey(),
+            'user_type' => $request->user()::class,
+        ];
+        $assignedGroupId = ProposalActionReviewer::query()
+            ->where('proposal_id', $proposal->id)
+            ->where('action_id', $action->id)
+            ->where('round', $this->currentReviewRound($proposal, $action))
+            ->where('user_id', $identity['user_id'])
+            ->where('user_type', $identity['user_type'])
+            ->value('reviewer_group_id');
+        if ($assignedGroupId !== null) {
+            $assignedGroup = $reviewerGroups->first(
+                fn (array $group): bool => (string) ($group['id'] ?? '') === $assignedGroupId,
+            );
+
+            return $assignedGroup === null
+                ? []
+                : array_values(array_unique($groupDocumentIds($assignedGroup)));
         }
 
         $allGroupDocumentIds = $reviewerGroups

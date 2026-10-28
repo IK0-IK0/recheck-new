@@ -305,12 +305,11 @@ class ProcessManagementController extends Controller
                 'array',
                 $request->input('action_type') === 'submit' ? 'max:1' : 'max:20',
             ],
-            'reviewer_groups.0.role_ids' => $request->input('action_type') === 'review'
-                ? ['required', 'array', 'size:1']
-                : ['sometimes', 'array'],
             'reviewer_groups.*.id' => ['required_with:reviewer_groups', 'string', 'max:255', 'distinct'],
             'reviewer_groups.*.name' => ['required_with:reviewer_groups', 'string', 'max:100'],
-            'reviewer_groups.*.role_ids' => ['sometimes', 'array', 'max:1'],
+            'reviewer_groups.*.role_ids' => $request->input('action_type') === 'review'
+                ? ['required', 'array', 'size:1']
+                : ['sometimes', 'array', 'max:1'],
             'reviewer_groups.*.role_ids.*' => ['integer', function (string $attribute, mixed $value, \Closure $fail): void {
                 if (! Role::on('tenant')->whereKey($value)->exists()) {
                     $fail('The selected role is invalid.');
@@ -402,12 +401,11 @@ class ProcessManagementController extends Controller
                 'array',
                 $request->input('action_type') === 'submit' ? 'max:1' : 'max:20',
             ],
-            'reviewer_groups.0.role_ids' => $request->input('action_type') === 'review'
-                ? ['required', 'array', 'size:1']
-                : ['sometimes', 'array'],
             'reviewer_groups.*.id' => ['required_with:reviewer_groups', 'string', 'max:255', 'distinct'],
             'reviewer_groups.*.name' => ['required_with:reviewer_groups', 'string', 'max:100'],
-            'reviewer_groups.*.role_ids' => ['sometimes', 'array', 'max:1'],
+            'reviewer_groups.*.role_ids' => $request->input('action_type') === 'review'
+                ? ['required', 'array', 'size:1']
+                : ['sometimes', 'array', 'max:1'],
             'reviewer_groups.*.role_ids.*' => ['integer', function (string $attribute, mixed $value, \Closure $fail): void {
                 if (! Role::on('tenant')->whereKey($value)->exists()) {
                     $fail('The selected role is invalid.');

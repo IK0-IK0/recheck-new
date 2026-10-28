@@ -13,6 +13,7 @@ class ProposalActionReviewer extends Model
         'proposal_id',
         'action_id',
         'round',
+        'reviewer_group_id',
         'user_id',
         'user_type',
         'assigned_by_user_id',

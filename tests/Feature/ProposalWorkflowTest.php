@@ -474,14 +474,17 @@ test('institution accounts must assign additional reviewers before making a deci
     ]);
     $reviewerRole = Role::factory()->create();
     $otherReviewerRole = Role::factory()->create();
-    $assignedReviewer = TenantUser::query()->create([
+    $assignedReviewer = new SuperadminTenantUser;
+    $assignedReviewer->forceFill([
+        'institution_id' => 1,
         'name' => 'Eligible reviewer',
         'email' => 'eligible-reviewer@example.test',
         'password' => 'test-password',
     ]);
-    DB::connection('tenant')->table('role_user')->insert([
-        'role_id' => $reviewerRole->id,
-        'user_id' => $assignedReviewer->id,
+    $assignedReviewer->save();
+    DB::connection('tenant')->table('role_tenant_user')->insert([
+        'role_id' => $otherReviewerRole->id,
+        'tenant_user_id' => $assignedReviewer->id,
     ]);
     $mainReviewerDocument = Document::factory()->create([
         'name' => 'Main reviewer file',
@@ -563,7 +566,9 @@ test('institution accounts must assign additional reviewers before making a deci
         ->and($trackingProps['proposals'][0]['can_review'])->toBeTrue()
         ->and($trackingProps['proposals'][0]['is_main_reviewer'])->toBeTrue()
         ->and($trackingProps['proposals'][0]['can_submit_decision'])->toBeFalse()
-        ->and(collect($trackingProps['proposals'][0]['review_reviewer_candidates'])->pluck('name')->all())
+        ->and($trackingProps['proposals'][0]['review_reviewer_groups'][0]['name'])
+        ->toBe('Other reviewer')
+        ->and(collect($trackingProps['proposals'][0]['review_reviewer_groups'][0]['candidates'])->pluck('name')->all())
         ->toContain('Eligible reviewer')
         ->and(collect($trackingProps['proposals'][0]['review_documents'])->pluck('id')->sort()->values()->all())
         ->toBe(collect([$mainReviewerDocument->id, $acceptedDocument->id])->sort()->values()->all());
@@ -575,7 +580,7 @@ test('institution accounts must assign additional reviewers before making a deci
         ->and($proposal->actionTransitions()->count())->toBe(0);
 });
 
-test('review assignment candidates include local and institution users in the selected role', function () {
+test('review assignment candidates come from institution users in users management', function () {
     $institution = User::factory()->create(['role' => 'institution']);
     $reviewerRole = Role::factory()->create();
 
@@ -610,7 +615,7 @@ test('review assignment candidates include local and institution users in the se
     );
 
     expect(collect($candidates)->pluck('email')->all())
-        ->toContain('local-reviewer@example.test', 'institution-reviewer@example.test');
+        ->toBe(['institution-reviewer@example.test']);
 });
 
 test('tracking provides documents assigned to the current reviewer group', function () {
@@ -730,9 +735,32 @@ test('main-role members can assign reviewers and decisions wait for recommendati
     $process = Process::factory()->create();
     $phase = Phase::factory()->for($process)->create();
     $mainReviewerRole = Role::create(['name' => 'Main reviewer']);
+    $subReviewerRole = Role::create(['name' => 'Legal reviewer']);
+    $secondSubReviewerRole = Role::create(['name' => 'Finance reviewer']);
+    $subReviewer = new SuperadminTenantUser;
+    $subReviewer->forceFill([
+        'id' => 2,
+        'institution_id' => 1,
+        'name' => 'Legal reviewer',
+        'email' => 'legal-reviewer@example.test',
+        'password' => 'test-password',
+    ]);
+    $subReviewer->save();
+    $secondSubReviewer = new SuperadminTenantUser;
+    $secondSubReviewer->forceFill([
+        'id' => 4,
+        'institution_id' => 1,
+        'name' => 'Finance reviewer',
+        'email' => 'finance-reviewer@example.test',
+        'password' => 'test-password',
+    ]);
+    $secondSubReviewer->save();
     DB::connection('tenant')->table('role_tenant_user')->insert([
         ['role_id' => $mainReviewerRole->id, 'tenant_user_id' => 1],
         ['role_id' => $mainReviewerRole->id, 'tenant_user_id' => 2],
+        ['role_id' => $mainReviewerRole->id, 'tenant_user_id' => 3],
+        ['role_id' => $subReviewerRole->id, 'tenant_user_id' => 2],
+        ['role_id' => $secondSubReviewerRole->id, 'tenant_user_id' => 4],
     ]);
     $reviewAction = Action::factory()->for($phase)->create([
         'action_type' => 'review',
@@ -741,6 +769,16 @@ test('main-role members can assign reviewers and decisions wait for recommendati
             'id' => 'assignment-1',
             'name' => 'Main reviewer role',
             'role_ids' => [$mainReviewerRole->id],
+            'document_ids' => [],
+        ], [
+            'id' => 'legal-reviewer',
+            'name' => 'Legal review',
+            'role_ids' => [$subReviewerRole->id],
+            'document_ids' => [],
+        ], [
+            'id' => 'finance-reviewer',
+            'name' => 'Finance review',
+            'role_ids' => [$secondSubReviewerRole->id],
             'document_ids' => [],
         ]],
     ]);
@@ -757,10 +795,35 @@ test('main-role members can assign reviewers and decisions wait for recommendati
     $mainReviewer = new SuperadminTenantUser;
     $mainReviewer->setAttribute($mainReviewer->getKeyName(), 1);
     $mainReviewer->setAttribute('institution_id', 1);
+    $incompleteAssignmentRequest = Request::create(
+        '/tenant/proposals/'.$proposal->id.'/reviewers',
+        'PUT',
+        ['assignments' => [[
+            'reviewer_group_id' => 'legal-reviewer',
+            'reviewer' => SuperadminTenantUser::class.':2',
+        ]]],
+    );
+    $incompleteAssignmentRequest->setUserResolver(fn (): SuperadminTenantUser => $mainReviewer);
+
+    expect(fn () => $controller->assignReviewers(
+        $incompleteAssignmentRequest,
+        $proposal,
+        app(ReviewAssignmentService::class),
+    ))->toThrow(ValidationException::class);
+
     $assignmentRequest = Request::create(
         '/tenant/proposals/'.$proposal->id.'/reviewers',
         'PUT',
-        ['reviewers' => [SuperadminTenantUser::class.':2']],
+        ['assignments' => [
+            [
+                'reviewer_group_id' => 'legal-reviewer',
+                'reviewer' => SuperadminTenantUser::class.':2',
+            ],
+            [
+                'reviewer_group_id' => 'finance-reviewer',
+                'reviewer' => SuperadminTenantUser::class.':4',
+            ],
+        ]],
     );
     $assignmentRequest->setUserResolver(fn (): SuperadminTenantUser => $mainReviewer);
     $controller->assignReviewers($assignmentRequest, $proposal, app(ReviewAssignmentService::class));
@@ -776,7 +839,16 @@ test('main-role members can assign reviewers and decisions wait for recommendati
     $takeoverRequest = Request::create(
         '/tenant/proposals/'.$proposal->id.'/reviewers',
         'PUT',
-        ['reviewers' => [SuperadminTenantUser::class.':2']],
+        ['assignments' => [
+            [
+                'reviewer_group_id' => 'legal-reviewer',
+                'reviewer' => SuperadminTenantUser::class.':2',
+            ],
+            [
+                'reviewer_group_id' => 'finance-reviewer',
+                'reviewer' => SuperadminTenantUser::class.':4',
+            ],
+        ]],
     );
     $takeoverRequest->setUserResolver(fn (): SuperadminTenantUser => $otherRoleMember);
     $controller->assignReviewers(
@@ -785,7 +857,9 @@ test('main-role members can assign reviewers and decisions wait for recommendati
         app(ReviewAssignmentService::class),
     );
 
-    expect($reviewer->fresh()->assigned_by_user_id)->toBe(3);
+    expect($reviewer->fresh()->assigned_by_user_id)->toBe(3)
+        ->and($reviewer->fresh()->reviewer_group_id)->toBe('legal-reviewer')
+        ->and(ProposalActionReviewer::query()->where('reviewer_group_id', 'finance-reviewer')->exists())->toBeTrue();
 
     $mainRequest = Request::create(
         '/tenant/proposals/'.$proposal->id.'/review',
@@ -809,6 +883,14 @@ test('main-role members can assign reviewers and decisions wait for recommendati
     );
     $memberRequest->setUserResolver(fn (): SuperadminTenantUser => $additionalReviewer);
     $controller->submitReviewerResponse($memberRequest, $proposal);
+
+    $secondMemberRequest = Request::create(
+        '/tenant/proposals/'.$proposal->id.'/reviewer-response',
+        'POST',
+        ['decision' => 'approve', 'comment' => 'Financial review complete.'],
+    );
+    $secondMemberRequest->setUserResolver(fn (): SuperadminTenantUser => $secondSubReviewer);
+    $controller->submitReviewerResponse($secondMemberRequest, $proposal);
 
     expect($reviewer->fresh()->decision)->toBe('deny')
         ->and($reviewer->fresh()->comment)->toBe('Needs more detail.')

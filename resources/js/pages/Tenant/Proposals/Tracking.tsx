@@ -16,7 +16,6 @@ import { toast } from 'sonner';
 import PhasePipeline from '@/components/PhasePipeline';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
     DropdownMenu,
@@ -68,10 +67,20 @@ type ReviewMember = {
     id: number;
     user_id: number;
     user_type: string;
+    reviewer_group_id: string | null;
+    reviewer_group_name: string;
     name: string;
     decision: string | null;
     comment: string | null;
     responded_at: string | null;
+};
+
+type ReviewGroupAssignment = {
+    id: string;
+    name: string;
+    role_id: number | null;
+    candidates: ReviewCandidate[];
+    assigned_reviewer_id: string | null;
 };
 
 type ReviewDocument = {
@@ -97,8 +106,7 @@ type Proposal = {
     requires_additional_reviewers?: boolean;
     can_submit_decision?: boolean;
     review_members?: ReviewMember[];
-    review_reviewer_candidates?: ReviewCandidate[];
-    assigned_reviewer_ids?: string[];
+    review_reviewer_groups?: ReviewGroupAssignment[];
     member_decision?: string | null;
     title: string;
     process: Process | null;
@@ -196,7 +204,7 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
     const [selectedMemberRecommendation, setSelectedMemberRecommendation] = useState('');
     const [memberRecommendationComment, setMemberRecommendationComment] = useState('');
     const [isReviewerAssignmentDialogOpen, setIsReviewerAssignmentDialogOpen] = useState(false);
-    const [reviewerSelections, setReviewerSelections] = useState<Record<number, string[]>>({});
+    const [reviewerSelections, setReviewerSelections] = useState<Record<number, Record<string, string>>>({});
     const [filledReviewFormIds, setFilledReviewFormIds] = useState<number[]>([]);
     const [rejectedDocumentIds, setRejectedDocumentIds] = useState<number[]>([]);
     const [rejectedDocumentComments, setRejectedDocumentComments] = useState<
@@ -315,17 +323,23 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
     )
         ? selectedMemberRecommendation
         : (reviewDecisions[0]?.value ?? '');
-    const selectedReviewerIds = selectedProposal
-        ? reviewerSelections[selectedProposal.id] ?? selectedProposal.assigned_reviewer_ids ?? []
-        : [];
-    const assignedReviewerIds = selectedProposal?.assigned_reviewer_ids ?? [];
-    const hasAssignedReviewers = assignedReviewerIds.length > 0;
+    const reviewerGroups = selectedProposal?.review_reviewer_groups ?? [];
+    const assignedReviewerSelections = Object.fromEntries(
+        reviewerGroups.map((group) => [group.id, group.assigned_reviewer_id ?? '']),
+    );
+    const selectedReviewerSelections = selectedProposal
+        ? reviewerSelections[selectedProposal.id] ?? assignedReviewerSelections
+        : {};
+    const hasAssignedReviewers = reviewerGroups.every(
+        (group) => group.assigned_reviewer_id !== null,
+    );
     const hasReviewerResponded = (selectedProposal?.review_members ?? []).some(
         (member) => member.responded_at !== null,
     );
     const requiresAdditionalReviewers = selectedProposal?.requires_additional_reviewers ?? false;
-    const hasUnsavedReviewerChanges = [...selectedReviewerIds].sort().join('|')
-        !== [...assignedReviewerIds].sort().join('|');
+    const hasUnsavedReviewerChanges = reviewerGroups.some(
+        (group) => selectedReviewerSelections[group.id] !== (group.assigned_reviewer_id ?? ''),
+    );
     const isRejectingReview = isRejectionOutcome(
         reviewDecision,
         reviewDecisions.find((decision) => decision.value === reviewDecision)?.label,
@@ -426,31 +440,47 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
         );
     };
 
-    const handleReviewerSelection = (reviewerId: string, checked: boolean | 'indeterminate') => {
+    const handleReviewerSelection = (groupId: string, reviewerId: string) => {
         if (!selectedProposal) {
             return;
         }
 
         setReviewerSelections((current) => {
-            const selectedIds = current[selectedProposal.id]
-                ?? selectedProposal.assigned_reviewer_ids
-                ?? [];
-            const nextIds = checked === true
-                ? [...selectedIds, reviewerId]
-                : selectedIds.filter((id) => id !== reviewerId);
+            const selectedAssignments = current[selectedProposal.id]
+                ?? Object.fromEntries(
+                    (selectedProposal.review_reviewer_groups ?? []).map((group) => [
+                        group.id,
+                        group.assigned_reviewer_id ?? '',
+                    ]),
+                );
 
-            return { ...current, [selectedProposal.id]: nextIds };
+            return {
+                ...current,
+                [selectedProposal.id]: {
+                    ...selectedAssignments,
+                    [groupId]: reviewerId,
+                },
+            };
         });
     };
 
     const handleSaveReviewers = () => {
-        if (!selectedProposal?.is_main_reviewer || !hasUnsavedReviewerChanges) {
+        if (
+            !selectedProposal?.is_main_reviewer
+            || !hasUnsavedReviewerChanges
+            || reviewerGroups.some((group) => !selectedReviewerSelections[group.id])
+        ) {
             return;
         }
 
         router.put(
             `/tenant/proposals/${selectedProposal.id}/reviewers`,
-            { reviewers: selectedReviewerIds },
+            {
+                assignments: reviewerGroups.map((group) => ({
+                    reviewer_group_id: group.id,
+                    reviewer: selectedReviewerSelections[group.id],
+                })),
+            },
             {
                 preserveScroll: true,
                 onStart: () => setIsSubmittingDecision(true),
@@ -463,11 +493,11 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
 
                         return next;
                     });
-                    toast.success('Additional reviewers updated.');
+                    toast.success('Reviewer assignments updated.');
 
                     router.reload({ only: ['proposals'] });
                 },
-                onError: (errors) => toast.error(errors.reviewers || 'Reviewer assignment failed.'),
+                onError: (errors) => toast.error(errors.assignments || 'Reviewer assignment failed.'),
             },
         );
     };
@@ -1301,9 +1331,9 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                         {requiresAdditionalReviewers ? (
                                             <div className="flex items-start justify-between gap-3">
                                                 <div>
-                                                <h3 className="text-sm font-semibold">Additional reviewers</h3>
+                                                <h3 className="text-sm font-semibold">Sub-review groups</h3>
                                                 <p className="text-xs text-muted-foreground">
-                                                    Assign at least one member of the main reviewer role. You can submit your decision after everyone responds.
+                                                    Assign one person to every configured group. Submit your decision after everyone responds.
                                                 </p>
                                             </div>
                                                 {hasAssignedReviewers && !hasReviewerResponded ? (
@@ -1322,7 +1352,7 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                         {requiresAdditionalReviewers && !hasAssignedReviewers ? (
                                             <div className="space-y-2 rounded-md border border-dashed border-border p-3">
                                                 <p className="text-sm text-muted-foreground">
-                                                    Assign at least one additional reviewer before submitting a decision.
+                                                    Assign one person to every sub-review group before submitting a decision.
                                                 </p>
                                                 <Button
                                                     type="button"
@@ -1348,7 +1378,10 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                                         return (
                                                             <li key={member.id} className="rounded-md border border-border px-3 py-2 text-sm">
                                                                 <div className="flex items-center justify-between gap-2">
-                                                                    <span className="font-medium">{member.name}</span>
+                                                                    <span>
+                                                                        <span className="block text-xs text-muted-foreground">{member.reviewer_group_name}</span>
+                                                                        <span className="font-medium">{member.name}</span>
+                                                                    </span>
                                                                     <Badge variant={member.responded_at ? 'secondary' : 'outline'}>
                                                                         {member.responded_at ? decisionLabel ?? member.decision : 'Waiting'}
                                                                     </Badge>
@@ -1479,32 +1512,62 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
             >
                 <DialogContent className="sm:max-w-lg">
                     <DialogHeader>
-                        <DialogTitle>Assign additional reviewers</DialogTitle>
+                        <DialogTitle>Assign reviewers to each group</DialogTitle>
                         <DialogDescription>
-                            Select at least one member of the main reviewer role. You can submit your decision after everyone responds.
+                            Choose one person from the Users Management list for every configured sub-review group. The decision is available after all assigned reviewers respond.
                         </DialogDescription>
                     </DialogHeader>
-                    {selectedProposal?.review_reviewer_candidates?.length ? (
-                        <div className="max-h-72 space-y-2 overflow-y-auto rounded-md border border-border p-3">
-                            {selectedProposal.review_reviewer_candidates.map((candidate) => {
-                                const reviewerId = `${candidate.user_type}:${candidate.id}`;
-
-                                return (
-                                    <label key={reviewerId} className="flex items-center gap-2 text-sm">
-                                        <Checkbox
-                                            checked={selectedReviewerIds.includes(reviewerId)}
+                    {reviewerGroups.length > 0 ? (
+                        <div className="custom-scrollbar max-h-96 space-y-3 overflow-y-auto pr-1">
+                            {reviewerGroups.map((group) => (
+                                <div key={group.id} className="space-y-2 rounded-md border border-border p-3">
+                                    <div>
+                                        <p className="text-sm font-medium">{group.name}</p>
+                                        <p className="text-xs text-muted-foreground">
+                                            {group.candidates.length} user{group.candidates.length === 1 ? '' : 's'} available from the assigned role
+                                        </p>
+                                    </div>
+                                    {group.candidates.length > 0 ? (
+                                        <Select
+                                            value={selectedReviewerSelections[group.id] ?? ''}
+                                            onValueChange={(reviewerId) => handleReviewerSelection(group.id, reviewerId)}
                                             disabled={isSubmittingDecision || hasReviewerResponded}
-                                            onCheckedChange={(checked) => handleReviewerSelection(reviewerId, checked)}
-                                        />
-                                        <span className="min-w-0 flex-1 truncate">{candidate.name}</span>
-                                        <span className="truncate text-xs text-muted-foreground">{candidate.email}</span>
-                                    </label>
-                                );
-                            })}
+                                        >
+                                            <SelectTrigger aria-label={`Reviewer for ${group.name}`}>
+                                                <SelectValue placeholder="Choose a reviewer" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {group.candidates.map((candidate) => {
+                                                    const reviewerId = `${candidate.user_type}:${candidate.id}`;
+                                                    const assignedToAnotherGroup = reviewerGroups.some(
+                                                        (otherGroup) =>
+                                                            otherGroup.id !== group.id
+                                                            && selectedReviewerSelections[otherGroup.id] === reviewerId,
+                                                    );
+
+                                                    return (
+                                                        <SelectItem
+                                                            key={reviewerId}
+                                                            value={reviewerId}
+                                                            disabled={assignedToAnotherGroup}
+                                                        >
+                                                            {candidate.name} · {candidate.email}
+                                                        </SelectItem>
+                                                    );
+                                                })}
+                                            </SelectContent>
+                                        </Select>
+                                    ) : (
+                                        <p className="text-sm text-muted-foreground">
+                                            No Users Management accounts are assigned to this group’s role.
+                                        </p>
+                                    )}
+                                </div>
+                            ))}
                         </div>
                     ) : (
                         <p className="text-sm text-muted-foreground">
-                            No other users are assigned to the main reviewer role. Assign the role to users, then reopen this modal.
+                            This action has no sub-review groups to assign.
                         </p>
                     )}
                     <div className="flex justify-end gap-2">
@@ -1521,7 +1584,7 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                             disabled={
                                 isSubmittingDecision
                                 || !hasUnsavedReviewerChanges
-                                || selectedReviewerIds.length === 0
+                                || reviewerGroups.some((group) => !selectedReviewerSelections[group.id])
                                 || hasReviewerResponded
                             }
                             onClick={handleSaveReviewers}

@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Models\Action;
 use App\Models\SuperadminTenantUser;
-use App\Models\TenantUser;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -22,60 +21,33 @@ class ReviewAssignmentService
             return [];
         }
 
-        $users = [];
-        $localAssignments = DB::connection('tenant')
-            ->table('role_user')
-            ->whereIn('role_id', $roleIds)
-            ->get(['user_id', 'role_id']);
-        $localUserRoleIds = $localAssignments
-            ->groupBy('user_id')
-            ->map(fn ($assignments): array => $assignments
-                ->pluck('role_id')
-                ->map(fn ($roleId): int => (int) $roleId)
-                ->all());
-        $localUsers = TenantUser::query()
-            ->whereIn('id', $localUserRoleIds->keys())
-            ->orderBy('name')
-            ->get(['id', 'name', 'email']);
-
-        foreach ($localUsers as $user) {
-            $users[] = [
-                'id' => (int) $user->id,
-                'name' => $user->name,
-                'email' => $user->email,
-                'user_type' => TenantUser::class,
-                'role_ids' => $localUserRoleIds->get($user->id, []),
-            ];
+        $institutionId = $request->user()->getInstitutionId();
+        if ($institutionId === null) {
+            return [];
         }
 
-        $centralAssignments = DB::connection('tenant')
+        $roleAssignments = DB::connection('tenant')
             ->table('role_tenant_user')
             ->whereIn('role_id', $roleIds)
-            ->get(['tenant_user_id', 'role_id']);
-        $centralUserRoleIds = $centralAssignments
+            ->get(['tenant_user_id', 'role_id'])
             ->groupBy('tenant_user_id')
             ->map(fn ($assignments): array => $assignments
                 ->pluck('role_id')
                 ->map(fn ($roleId): int => (int) $roleId)
                 ->all());
-        $institutionId = $request->user()->getInstitutionId();
-        $centralUsers = $institutionId === null
-            ? collect()
-            : SuperadminTenantUser::query()
-                ->where('institution_id', $institutionId)
-                ->whereIn('id', $centralUserRoleIds->keys())
-                ->orderBy('name')
-                ->get(['id', 'name', 'email']);
-
-        foreach ($centralUsers as $user) {
-            $users[] = [
+        $users = SuperadminTenantUser::query()
+            ->where('institution_id', $institutionId)
+            ->whereIn('id', $roleAssignments->keys())
+            ->orderBy('name')
+            ->get(['id', 'name', 'email'])
+            ->map(fn (SuperadminTenantUser $user): array => [
                 'id' => (int) $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
                 'user_type' => SuperadminTenantUser::class,
-                'role_ids' => $centralUserRoleIds->get($user->id, []),
-            ];
-        }
+                'role_ids' => $roleAssignments->get($user->id, []),
+            ])
+            ->all();
 
         usort($users, fn (array $first, array $second): int => strcasecmp($first['name'], $second['name']));
 
