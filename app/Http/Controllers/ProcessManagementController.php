@@ -336,6 +336,15 @@ class ProcessManagementController extends Controller
                     $fail('The selected document is invalid.');
                 }
             }],
+            'review_decision_document_sets' => ['sometimes', 'array'],
+            'review_decision_document_sets.*.action_id' => $this->decisionSetActionRules($phase, null),
+            'review_decision_document_sets.*.decision_id' => $this->decisionSetOutcomeRules($request),
+            'review_decision_document_sets.*.document_ids' => ['sometimes', 'array'],
+            'review_decision_document_sets.*.document_ids.*' => ['integer', function (string $attribute, mixed $value, \Closure $fail): void {
+                if (! Document::on('tenant')->whereKey($value)->exists()) {
+                    $fail('The selected document is invalid.');
+                }
+            }],
             'requires_file' => ['sometimes', 'boolean'],
             'document_ids' => ['sometimes', 'array'],
             'document_ids.*' => ['integer', function (string $attribute, mixed $value, \Closure $fail): void {
@@ -366,7 +375,10 @@ class ProcessManagementController extends Controller
             'custom_decision_branches' => $actionType === 'review' && $decisionMode === 'custom'
                 ? $request->input('custom_decision_branches', [])
                 : [],
-            'reviewer_groups' => $request->input('reviewer_groups', []),
+            'reviewer_groups' => $this->reviewerGroupsForStorage($request, $actionType),
+            'review_decision_document_sets' => $actionType === 'review'
+                ? $this->reviewDecisionDocumentSets($request)
+                : [],
             'order' => $nextOrder,
         ]);
 
@@ -432,6 +444,15 @@ class ProcessManagementController extends Controller
                     $fail('The selected document is invalid.');
                 }
             }],
+            'review_decision_document_sets' => ['sometimes', 'array'],
+            'review_decision_document_sets.*.action_id' => $this->decisionSetActionRules($action->phase, $action),
+            'review_decision_document_sets.*.decision_id' => $this->decisionSetOutcomeRules($request),
+            'review_decision_document_sets.*.document_ids' => ['sometimes', 'array'],
+            'review_decision_document_sets.*.document_ids.*' => ['integer', function (string $attribute, mixed $value, \Closure $fail): void {
+                if (! Document::on('tenant')->whereKey($value)->exists()) {
+                    $fail('The selected document is invalid.');
+                }
+            }],
             'requires_file' => ['sometimes', 'boolean'],
             'document_ids' => ['sometimes', 'array'],
             'document_ids.*' => ['integer', function (string $attribute, mixed $value, \Closure $fail): void {
@@ -461,7 +482,14 @@ class ProcessManagementController extends Controller
             'custom_decision_branches' => $actionType === 'review' && $decisionMode === 'custom'
                 ? $request->input('custom_decision_branches', [])
                 : [],
-            'reviewer_groups' => $request->input('reviewer_groups', $action->reviewer_groups ?? []),
+            'reviewer_groups' => $this->reviewerGroupsForStorage(
+                $request,
+                $actionType,
+                $action->reviewer_groups ?? [],
+            ),
+            'review_decision_document_sets' => $actionType === 'review'
+                ? $this->reviewDecisionDocumentSets($request, $action)
+                : [],
         ]);
         $action->roles()->sync($this->assignmentIds($request, 'role_ids'));
         $action->documents()->sync($this->assignmentIds($request, 'document_ids'));
@@ -588,8 +616,61 @@ class ProcessManagementController extends Controller
 
         return array_values(array_unique([
             ...$request->input($key, []),
+            ...collect($request->input('review_decision_document_sets', []))
+                ->flatMap(fn (array $set): array => $set[$key] ?? [])
+                ->all(),
             ...$groupIds,
         ]));
+    }
+
+    /**
+     * @return list<array{id: string, name: string, role_ids: array<int, int>, document_ids: array<int, int>}>
+     */
+    private function reviewerGroupsForStorage(Request $request, string $actionType, array $fallback = []): array
+    {
+        $groups = $request->input('reviewer_groups', $fallback);
+
+        if ($actionType !== 'review') {
+            return $groups;
+        }
+
+        return array_map(function (array $group): array {
+            unset($group['decision_document_sets']);
+
+            return $group;
+        }, $groups);
+    }
+
+    /**
+     * @return list<array{action_id: int, decision_id: string, document_ids: list<int>}>
+     */
+    private function reviewDecisionDocumentSets(Request $request, ?Action $action = null): array
+    {
+        if ($request->exists('review_decision_document_sets')) {
+            return $request->input('review_decision_document_sets', []);
+        }
+
+        $legacySets = collect($request->input('reviewer_groups', $action?->reviewer_groups ?? []))
+            ->flatMap(fn (array $group): array => $group['decision_document_sets'] ?? []);
+
+        if ($legacySets->isEmpty()) {
+            return $action?->review_decision_document_sets ?? [];
+        }
+
+        return $legacySets
+            ->groupBy(fn (array $set): string => (int) ($set['action_id'] ?? 0).':'.(string) ($set['decision_id'] ?? ''))
+            ->map(fn ($sets): array => [
+                'action_id' => (int) $sets->first()['action_id'],
+                'decision_id' => (string) $sets->first()['decision_id'],
+                'document_ids' => $sets
+                    ->flatMap(fn (array $set): array => $set['document_ids'] ?? [])
+                    ->map(fn ($id): int => (int) $id)
+                    ->unique()
+                    ->values()
+                    ->all(),
+            ])
+            ->values()
+            ->all();
     }
 
     /**
@@ -646,15 +727,17 @@ class ProcessManagementController extends Controller
             'required',
             'string',
             function (string $attribute, mixed $value, \Closure $fail) use ($request): void {
-                if (! preg_match('/reviewer_groups\.(\d+)\.decision_document_sets\.(\d+)\.decision_id/', $attribute, $matches)) {
+                if (preg_match('/^reviewer_groups\.(\d+)\.decision_document_sets\.(\d+)\.decision_id$/', $attribute, $matches)) {
+                    $actionIdPath = "reviewer_groups.{$matches[1]}.decision_document_sets.{$matches[2]}.action_id";
+                } elseif (preg_match('/^review_decision_document_sets\.(\d+)\.decision_id$/', $attribute, $matches)) {
+                    $actionIdPath = "review_decision_document_sets.{$matches[1]}.action_id";
+                } else {
                     $fail('The selected review outcome is invalid.');
 
                     return;
                 }
 
-                $actionId = $request->input(
-                    "reviewer_groups.{$matches[1]}.decision_document_sets.{$matches[2]}.action_id",
-                );
+                $actionId = $request->input($actionIdPath);
                 $sourceAction = Action::query()->find($actionId);
 
                 if (! $sourceAction) {

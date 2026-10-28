@@ -896,6 +896,8 @@ export default function ProcessManagement({
                         ),
                         reviewer_groups:
                             editingAction.action.reviewer_groups ?? [],
+                        review_decision_document_sets:
+                            editingAction.action.review_decision_document_sets ?? [],
                         approve_action_id:
                             editingAction.action.approve_action_id ?? null,
                         deny_action_id:

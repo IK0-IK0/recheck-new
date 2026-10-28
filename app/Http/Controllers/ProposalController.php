@@ -880,8 +880,9 @@ class ProposalController extends Controller
             $currentAction = Action::query()
                 ->with('documents')
                 ->find($proposal->current_action_id);
-            $hasOutcomeSpecificRequirements = collect($currentAction?->reviewer_groups ?? [])
-                ->contains(fn (array $group): bool => ! empty($group['decision_document_sets']));
+            $hasOutcomeSpecificRequirements = ! empty($currentAction?->review_decision_document_sets)
+                || collect($currentAction?->reviewer_groups ?? [])
+                    ->contains(fn (array $group): bool => ! empty($group['decision_document_sets']));
 
             if (
                 $currentAction
@@ -907,8 +908,9 @@ class ProposalController extends Controller
     private function requiredDocumentIdsForAction(Proposal $proposal, Action $action): array
     {
         $reviewerGroups = collect($action->reviewer_groups ?? []);
-        $decisionDocumentSets = $reviewerGroups
-            ->flatMap(fn (array $group): array => $group['decision_document_sets'] ?? []);
+        $decisionDocumentSets = collect($action->review_decision_document_sets ?? [])
+            ->whenEmpty(fn ($sets) => $reviewerGroups
+                ->flatMap(fn (array $group): array => $group['decision_document_sets'] ?? []));
 
         if ($decisionDocumentSets->isEmpty()) {
             return $action->documents
@@ -1666,15 +1668,19 @@ class ProposalController extends Controller
             ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->first(['action_id', 'decision']);
+        $decisionDocumentSets = collect($action->review_decision_document_sets ?? [])
+            ->whenEmpty(fn ($sets) => $reviewerGroups
+                ->flatMap(fn (array $group): array => $group['decision_document_sets'] ?? []));
+        $matchingOutcomeDocumentIds = $decisionDocumentSets
+            ->filter(fn (array $set): bool => $mostRecentDecision !== null
+                && (int) ($set['action_id'] ?? 0) === (int) $mostRecentDecision->action_id
+                && (string) ($set['decision_id'] ?? '') === (string) $mostRecentDecision->decision)
+            ->flatMap(fn (array $set): array => $set['document_ids'] ?? [])
+            ->map(fn ($id): int => (int) $id)
+            ->all();
         $groupDocumentIds = fn (array $group): array => [
             ...array_map('intval', $group['document_ids'] ?? []),
-            ...collect($group['decision_document_sets'] ?? [])
-                ->filter(fn (array $set): bool => $mostRecentDecision !== null
-                    && (int) ($set['action_id'] ?? 0) === (int) $mostRecentDecision->action_id
-                    && (string) ($set['decision_id'] ?? '') === (string) $mostRecentDecision->decision)
-                ->flatMap(fn (array $set): array => $set['document_ids'] ?? [])
-                ->map(fn ($id): int => (int) $id)
-                ->all(),
+            ...$matchingOutcomeDocumentIds,
         ];
 
         if ($this->mainReviewerRoleId($action) !== null && $this->isMainReviewer($request, $action)) {
@@ -1709,11 +1715,10 @@ class ProposalController extends Controller
         $allGroupDocumentIds = $reviewerGroups
             ->flatMap(fn (array $group): array => [
                 ...array_map('intval', $group['document_ids'] ?? []),
-                ...collect($group['decision_document_sets'] ?? [])
-                    ->flatMap(fn (array $set): array => $set['document_ids'] ?? [])
-                    ->map(fn ($id): int => (int) $id)
-                    ->all(),
             ])
+            ->map(fn ($id): int => (int) $id)
+            ->unique()
+            ->merge($decisionDocumentSets->flatMap(fn (array $set): array => $set['document_ids'] ?? []))
             ->map(fn ($id): int => (int) $id)
             ->unique()
             ->values();

@@ -511,29 +511,24 @@ test('institution accounts must assign additional reviewers before making a deci
             'name' => 'Reviewer',
             'role_ids' => [$reviewerRole->id],
             'document_ids' => [$mainReviewerDocument->id],
-            'decision_document_sets' => [
-                [
-                    'action_id' => $sourceReviewAction->id,
-                    'decision_id' => 'accepted',
-                    'document_ids' => [$acceptedDocument->id],
-                ],
-                [
-                    'action_id' => $sourceReviewAction->id,
-                    'decision_id' => 'revised',
-                    'document_ids' => [$revisedDocument->id],
-                ],
-            ],
         ], [
             'id' => 'other-reviewer',
             'name' => 'Other reviewer',
             'role_ids' => [$otherReviewerRole->id],
             'document_ids' => [$otherReviewerDocument->id],
-            'decision_document_sets' => [[
+        ]],
+        'review_decision_document_sets' => [
+            [
                 'action_id' => $sourceReviewAction->id,
                 'decision_id' => 'accepted',
-                'document_ids' => [$otherReviewerDocument->id],
-            ]],
-        ]],
+                'document_ids' => [$acceptedDocument->id],
+            ],
+            [
+                'action_id' => $sourceReviewAction->id,
+                'decision_id' => 'revised',
+                'document_ids' => [$revisedDocument->id],
+            ],
+        ],
     ]);
     $proposal = Proposal::create([
         'title' => 'Research proposal',
@@ -572,6 +567,27 @@ test('institution accounts must assign additional reviewers before making a deci
         ->toContain('Eligible reviewer')
         ->and(collect($trackingProps['proposals'][0]['review_documents'])->pluck('id')->sort()->values()->all())
         ->toBe(collect([$mainReviewerDocument->id, $acceptedDocument->id])->sort()->values()->all());
+
+    ProposalActionReviewer::query()->create([
+        'proposal_id' => $proposal->id,
+        'action_id' => $reviewAction->id,
+        'round' => 1,
+        'reviewer_group_id' => 'other-reviewer',
+        'user_id' => $assignedReviewer->id,
+        'user_type' => SuperadminTenantUser::class,
+        'assigned_by_user_id' => 1,
+        'assigned_by_user_type' => SuperadminTenantUser::class,
+    ]);
+    $assignedReviewerRequest = Request::create('/tenant/proposals?view=tracking', 'GET');
+    $assignedReviewerRequest->setUserResolver(fn (): SuperadminTenantUser => $assignedReviewer);
+    $assignedReviewerProps = app(ProposalController::class)
+        ->index($assignedReviewerRequest)
+        ->toResponse($assignedReviewerRequest)
+        ->getData(true)['props'];
+
+    expect($assignedReviewerProps['proposals'])->toHaveCount(1)
+        ->and(collect($assignedReviewerProps['proposals'][0]['review_documents'])->pluck('id')->sort()->values()->all())
+        ->toBe(collect([$otherReviewerDocument->id, $acceptedDocument->id])->sort()->values()->all());
 
     expect(fn () => app(ProposalController::class)->review($request, $proposal))
         ->toThrow(ValidationException::class);

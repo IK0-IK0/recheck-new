@@ -42,6 +42,7 @@ const defaultActionInitialValues = {
     decision_mode: 'approve_deny',
     custom_decision_branches: [],
     decision_branches: [],
+    review_decision_document_sets: [],
 };
 
 const createDecisionBranch = (type = 'custom', index = 1) => ({
@@ -139,7 +140,10 @@ function normalizeActionValues(actionValues = {}) {
                       ],
                   },
               ]
-            : reviewerGroups;
+            : reviewerGroups.map((group) => ({
+                  ...group,
+                  decisionDocumentSets: [],
+              }));
     const standardBranches = [
         {
             ...createDecisionBranch('approve', 1),
@@ -161,6 +165,15 @@ function normalizeActionValues(actionValues = {}) {
         roles: actionValues.roles ?? [],
         document_ids: actionValues.document_ids ?? [],
         reviewer_groups: normalizedReviewerGroups,
+        review_decision_document_sets: [
+            ...(actionValues.review_decision_document_sets ??
+                [...mergedDecisionDocumentSets.values()]),
+        ].map((set) => ({
+            actionId: set.actionId ?? set.action_id,
+            decisionId: set.decisionId ?? set.decision_id,
+            documentIds: set.documentIds ?? set.document_ids ?? [],
+            roleIds: set.roleIds ?? set.role_ids ?? [],
+        })),
         decision_mode: actionValues.decision_mode ?? 'approve_deny',
         custom_decision_branches: actionValues.custom_decision_branches ?? [],
         decision_branches: [
@@ -378,6 +391,22 @@ export default function ActionModal({
 
     const dialogOpen = open === undefined ? internalOpen : open;
     const setDialogOpen = onOpenChange ?? setInternalOpen;
+    const reviewDecisionDocumentSetsForAction = decisionSources.flatMap(
+        (source) =>
+            source.outcomes.map(
+                (outcome) =>
+                    values.review_decision_document_sets.find(
+                        (set) =>
+                            String(set.actionId) === String(source.id) &&
+                            set.decisionId === outcome.id,
+                    ) ?? {
+                        actionId: source.id,
+                        decisionId: outcome.id,
+                        documentIds: [],
+                        roleIds: [],
+                    },
+            ),
+    );
 
     const buildSubmissionGroups = (reviewerGroups) => {
         const [firstGroup] = reviewerGroups;
@@ -438,29 +467,11 @@ export default function ActionModal({
         ];
     };
     const buildReviewerGroups = (reviewerGroups) =>
-        reviewerGroups.map((group) => {
-            const existingSets = new Map(
-                group.decisionDocumentSets.map((set) => [
-                    `${set.actionId}:${set.decisionId}`,
-                    set,
-                ]),
-            );
-
-            return {
-                ...group,
-                decisionDocumentSets: decisionSources.flatMap((source) =>
-                    source.outcomes.map(
-                        (outcome) =>
-                            existingSets.get(`${source.id}:${outcome.id}`) ?? {
-                                actionId: source.id,
-                                decisionId: outcome.id,
-                                documentIds: [],
-                                roleIds: [],
-                            },
-                    ),
-                ),
-            };
-        });
+        reviewerGroups.map((group, index) => ({
+            ...group,
+            decisionDocumentSets:
+                index === 0 ? reviewDecisionDocumentSetsForAction : [],
+        }));
     const reviewerGroupsForAction =
         values.action_type === 'submit'
             ? buildSubmissionGroups(values.reviewer_groups)
@@ -530,19 +541,17 @@ export default function ActionModal({
             delete submissionValues.reviewer_groups;
             const rest = submissionValues;
             const submissionGroups = reviewerGroupsForAction;
+            const decisionDocumentSets =
+                values.action_type === 'submit'
+                    ? submissionGroups.flatMap((group) => group.decisionDocumentSets)
+                    : reviewDecisionDocumentSetsForAction;
             const roleIds = [
                 ...new Set([
                     ...submissionGroups.flatMap((group) => group.roleIds),
-                    ...submissionGroups.flatMap((group) =>
-                        group.decisionDocumentSets.flatMap(
-                            (set) => set.roleIds,
-                        ),
-                    ),
+                    ...decisionDocumentSets.flatMap((set) => set.roleIds),
                 ]),
             ];
-            const decisionDocumentIds = submissionGroups.flatMap((group) =>
-                group.decisionDocumentSets.flatMap((set) => set.documentIds),
-            );
+            const decisionDocumentIds = decisionDocumentSets.flatMap((set) => set.documentIds);
             const documentIds = [
                 ...new Set([
                     ...submissionGroups.flatMap((group) => group.documentIds),
@@ -570,15 +579,24 @@ export default function ActionModal({
                     name: group.name,
                     role_ids: group.roleIds,
                     document_ids: group.documentIds,
-                    decision_document_sets: group.decisionDocumentSets.map(
-                        (set) => ({
-                            action_id: Number(set.actionId),
-                            decision_id: set.decisionId,
-                            document_ids: set.documentIds,
-                            role_ids: set.roleIds,
-                        }),
-                    ),
+                    decision_document_sets:
+                        values.action_type === 'submit'
+                            ? group.decisionDocumentSets.map((set) => ({
+                                  action_id: Number(set.actionId),
+                                  decision_id: set.decisionId,
+                                  document_ids: set.documentIds,
+                                  role_ids: set.roleIds,
+                              }))
+                            : [],
                 })),
+                review_decision_document_sets:
+                    values.action_type === 'review'
+                        ? reviewDecisionDocumentSetsForAction.map((set) => ({
+                              action_id: Number(set.actionId),
+                              decision_id: set.decisionId,
+                              document_ids: set.documentIds,
+                          }))
+                        : [],
                 decision_mode: decisionMode,
                 approve_action_id:
                     decisionMode === 'approve_deny'
@@ -633,25 +651,46 @@ export default function ActionModal({
         });
     };
 
-    const toggleGroupDocument = (group, documentId) => {
+    const updateReviewDecisionSet = (setKey, update) => {
+        setValues({
+            ...values,
+            review_decision_document_sets: values.review_decision_document_sets.map(
+                (set) =>
+                    `${set.actionId}:${set.decisionId}` === setKey
+                        ? update(set)
+                        : set,
+            ),
+        });
+    };
+
+    const toggleGroupDocument = (group, documentId, sharedOutcome = false) => {
         if (
+            (sharedOutcome || values.action_type === 'submit') &&
             activeDocumentSetForDisplay !== 'all'
         ) {
-            updateReviewerGroup(group.id, {
-                decisionDocumentSets: group.decisionDocumentSets.map((set) =>
-                    `${set.actionId}:${set.decisionId}` ===
-                    activeDocumentSetForDisplay
-                        ? {
-                              ...set,
-                              documentIds: set.documentIds.includes(documentId)
-                                  ? set.documentIds.filter(
-                                        (item) => item !== documentId,
-                                    )
-                                  : [...set.documentIds, documentId],
-                          }
-                        : set,
-                ),
-            });
+            if (values.action_type === 'submit') {
+                updateReviewerGroup(group.id, {
+                    decisionDocumentSets: group.decisionDocumentSets.map((set) =>
+                        `${set.actionId}:${set.decisionId}` === activeDocumentSetForDisplay
+                            ? {
+                                  ...set,
+                                  documentIds: set.documentIds.includes(documentId)
+                                      ? set.documentIds.filter((item) => item !== documentId)
+                                      : [...set.documentIds, documentId],
+                              }
+                            : set,
+                    ),
+                });
+
+                return;
+            }
+
+            updateReviewDecisionSet(activeDocumentSetForDisplay, (set) => ({
+                ...set,
+                documentIds: set.documentIds.includes(documentId)
+                    ? set.documentIds.filter((item) => item !== documentId)
+                    : [...set.documentIds, documentId],
+            }));
 
             return;
         }
@@ -689,8 +728,11 @@ export default function ActionModal({
         updateDecisionSetRole(group, roleId);
     };
 
-    const clearActiveDocumentSet = (group) => {
-        if (activeDocumentSetForDisplay === 'all') {
+    const clearActiveDocumentSet = (group, sharedOutcome = false) => {
+        if (
+            (!sharedOutcome && values.action_type !== 'submit') ||
+            activeDocumentSetForDisplay === 'all'
+        ) {
             updateReviewerGroup(group.id, {
                 ...(values.action_type === 'submit' ? { roleIds: [] } : {}),
                 documentIds: [],
@@ -699,20 +741,51 @@ export default function ActionModal({
             return;
         }
 
-        updateReviewerGroup(group.id, {
-            decisionDocumentSets: group.decisionDocumentSets.map((set) =>
-                `${set.actionId}:${set.decisionId}` ===
-                activeDocumentSetForDisplay
-                    ? { ...set, roleIds: [], documentIds: [] }
-                    : set,
-            ),
-        });
+        if (values.action_type === 'submit') {
+            updateReviewerGroup(group.id, {
+                decisionDocumentSets: group.decisionDocumentSets.map((set) =>
+                    `${set.actionId}:${set.decisionId}` === activeDocumentSetForDisplay
+                        ? { ...set, roleIds: [], documentIds: [] }
+                        : set,
+                ),
+            });
+
+            return;
+        }
+
+        updateReviewDecisionSet(activeDocumentSetForDisplay, (set) => ({
+            ...set,
+            roleIds: [],
+            documentIds: [],
+        }));
     };
 
     const hasConfiguredOutcomeSets = (group) =>
-        group.decisionDocumentSets.some(
+        (values.action_type === 'review'
+            ? reviewDecisionDocumentSetsForAction
+            : group.decisionDocumentSets).some(
             (set) => set.roleIds.length > 0 || set.documentIds.length > 0,
         );
+
+    const isCurrentDocumentSetEmpty = (group, index) => {
+        if (
+            activeDocumentSetForDisplay === 'all' ||
+            (values.action_type === 'review' && index > 0)
+        ) {
+            return group.documentIds.length === 0 &&
+                (values.action_type !== 'submit' || group.roleIds.length === 0);
+        }
+
+        const sets = values.action_type === 'review'
+            ? reviewDecisionDocumentSetsForAction
+            : group.decisionDocumentSets;
+        const currentSet = sets.find(
+            (set) => `${set.actionId}:${set.decisionId}` === activeDocumentSetForDisplay,
+        );
+
+        return !currentSet ||
+            (currentSet.roleIds.length === 0 && currentSet.documentIds.length === 0);
+    };
 
     const updateDecisionBranch = (branchId, updates) => {
         setValues({
@@ -1239,7 +1312,9 @@ export default function ActionModal({
                                                 <div
                                                     className={
                                                         values.action_type === 'submit' ||
-                                                        decisionSources.length > 0
+                                                        (values.action_type === 'review' &&
+                                                            index === 0 &&
+                                                            decisionSources.length > 0)
                                                             ? 'grid grid-cols-[minmax(0,1fr)_minmax(8rem,14rem)] items-center gap-3'
                                                             : 'flex items-center gap-3'
                                                     }
@@ -1260,7 +1335,9 @@ export default function ActionModal({
                                                         className="h-9"
                                                     />
                                                     {values.action_type === 'submit' ||
-                                                    decisionSources.length > 0 ? (
+                                                    (values.action_type === 'review' &&
+                                                        index === 0 &&
+                                                        decisionSources.length > 0) ? (
                                                         <Select
                                                             value={
                                                                 activeDocumentSetForDisplay
@@ -1275,7 +1352,11 @@ export default function ActionModal({
                                                                     : 'Reviewer document outcome'}
                                                                 className="h-9 w-full"
                                                             >
-                                                                <SelectValue placeholder="Choose document and outcome set" />
+                                                                <SelectValue
+                                                                    placeholder={values.action_type === 'review'
+                                                                        ? 'Shared reviewer outcomes'
+                                                                        : 'Choose document and outcome set'}
+                                                                />
                                                             </SelectTrigger>
                                                             <SelectContent className="custom-scrollbar max-h-48">
                                                                 <SelectItem value="all">
@@ -1395,13 +1476,13 @@ export default function ActionModal({
                                                         </Button>
                                                     ) : null}
                                                 </div>
-                                                {values.action_type ===
-                                                    'submit' || decisionSources.length > 0 ? (
+                                                {values.action_type === 'submit' || values.action_type === 'review' ? (
                                                     <div className="grid gap-4">
                                                         <div className="flex items-center justify-between gap-3">
                                                             <Label>
-                                                                Required
-                                                                documents
+                                                                {values.action_type === 'review' && index === 0 && activeDocumentSetForDisplay !== 'all'
+                                                                    ? 'Outcome documents shared with all reviewer groups'
+                                                                    : 'Required documents'}
                                                             </Label>
                                                             <Button
                                                                 type="button"
@@ -1411,28 +1492,10 @@ export default function ActionModal({
                                                                 onClick={() =>
                                                                     clearActiveDocumentSet(
                                                                         group,
+                                                                        values.action_type === 'review' && index === 0,
                                                                     )
                                                                 }
-                                                                disabled={
-                                                                    activeDocumentSetForDisplay === 'all'
-                                                                        ? group.documentIds.length === 0 &&
-                                                                          (values.action_type !== 'submit' || group.roleIds.length === 0)
-                                                                        : !group.decisionDocumentSets.some(
-                                                                              (
-                                                                                  set,
-                                                                              ) =>
-                                                                                  `${set.actionId}:${set.decisionId}` ===
-                                                                                      activeDocumentSetForDisplay &&
-                                                                                  (set
-                                                                                      .roleIds
-                                                                                      .length >
-                                                                                      0 ||
-                                                                                      set
-                                                                                          .documentIds
-                                                                                          .length >
-                                                                                          0),
-                                                                          )
-                                                                }
+                                                                disabled={isCurrentDocumentSetEmpty(group, index)}
                                                             >
                                                                 <Trash2 className="size-3.5" />
                                                                 Clear current
@@ -1520,8 +1583,8 @@ export default function ActionModal({
                                                             label="Documents for this group"
                                                             items={documents}
                                                             selectedIds={
-                                                                activeDocumentSetForDisplay !==
-                                                                    'all'
+                                                                activeDocumentSetForDisplay !== 'all' &&
+                                                                (values.action_type !== 'review' || index === 0)
                                                                     ? (group.decisionDocumentSets.find(
                                                                           (
                                                                               set,
@@ -1539,6 +1602,7 @@ export default function ActionModal({
                                                                 toggleGroupDocument(
                                                                     group,
                                                                     documentId,
+                                                                    values.action_type === 'review' && index === 0,
                                                                 )
                                                             }
                                                             placeholder={

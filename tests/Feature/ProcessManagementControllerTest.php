@@ -380,18 +380,25 @@ test('reviewer group outcome document sets persist and join the action requireme
         'order' => 1,
     ]);
     $reviewerRole = Role::factory()->create();
+    $subReviewerRole = Role::factory()->create();
     $allDocument = Document::factory()->create();
+    $subGroupDocument = Document::factory()->create();
     $outcomeDocument = Document::factory()->create();
     $reviewerGroups = [[
         'id' => 'main-reviewer',
         'name' => 'Main reviewer',
         'role_ids' => [$reviewerRole->id],
         'document_ids' => [$allDocument->id],
-        'decision_document_sets' => [[
-            'action_id' => $sourceAction->id,
-            'decision_id' => 'accepted',
-            'document_ids' => [$outcomeDocument->id],
-        ]],
+    ], [
+        'id' => 'sub-reviewer',
+        'name' => 'Sub-reviewer',
+        'role_ids' => [$subReviewerRole->id],
+        'document_ids' => [$subGroupDocument->id],
+    ]];
+    $reviewDecisionDocumentSets = [[
+        'action_id' => $sourceAction->id,
+        'decision_id' => 'accepted',
+        'document_ids' => [$outcomeDocument->id],
     ]];
 
     (new ProcessManagementController)->storeAction(
@@ -399,6 +406,7 @@ test('reviewer group outcome document sets persist and join the action requireme
             'name' => 'Review documents',
             'action_type' => 'review',
             'reviewer_groups' => $reviewerGroups,
+            'review_decision_document_sets' => $reviewDecisionDocumentSets,
         ]),
         $phase,
     );
@@ -408,10 +416,11 @@ test('reviewer group outcome document sets persist and join the action requireme
         ->firstOrFail();
 
     expect($reviewAction->reviewer_groups)->toBe($reviewerGroups)
+        ->and($reviewAction->review_decision_document_sets)->toBe($reviewDecisionDocumentSets)
         ->and($reviewAction->roles()->pluck('roles.id')->all())
-        ->toBe([$reviewerRole->id])
+        ->toBe([$reviewerRole->id, $subReviewerRole->id])
         ->and($reviewAction->documents()->pluck('documents.id')->sort()->values()->all())
-        ->toBe(collect([$allDocument->id, $outcomeDocument->id])->sort()->values()->all());
+        ->toBe(collect([$allDocument->id, $outcomeDocument->id, $subGroupDocument->id])->sort()->values()->all());
 });
 
 // ---------------------------------------------------------------------------
