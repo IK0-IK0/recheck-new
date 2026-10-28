@@ -9,6 +9,7 @@ use App\Models\Process;
 use App\Models\Proposal;
 use App\Models\Role;
 use App\Models\SuperadminTenantUser;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -40,7 +41,10 @@ class ProcessManagementController extends Controller
                 ->whereNull('completed_at')
                 ->whereNotNull('process_id');
 
-            if (! $this->userHasPermission($request, 'proposal.view.all')) {
+            if (
+                ! $this->userHasPermission($request, 'proposal.view.all')
+                && ! $this->isInstitutionAccount($request)
+            ) {
                 $roleIds = $this->userRoleIds($request);
                 $assignedActionIds = $this->assignedReviewActionIds($roleIds);
 
@@ -128,6 +132,15 @@ class ProcessManagementController extends Controller
             ->where($pivotTable.'.'.$userIdColumn, $user->getKey())
             ->where('permissions.name', $permissionName)
             ->exists();
+    }
+
+    private function isInstitutionAccount(Request $request): bool
+    {
+        $user = $request->user();
+
+        return $user instanceof User
+            && ! ($user instanceof SuperadminTenantUser)
+            && $user->role === 'institution';
     }
 
     /**

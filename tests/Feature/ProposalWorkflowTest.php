@@ -487,6 +487,19 @@ test('institution accounts can review proposals without assigned reviewer roles'
     );
     $request->user()->setAttribute('role', 'institution');
 
+    $trackingRequest = proposalRequestAsOwner(
+        Request::create('/tenant/proposals?view=tracking', 'GET'),
+    );
+    $trackingRequest->user()->setAttribute('role', 'institution');
+    $trackingProps = app(ProposalController::class)
+        ->index($trackingRequest)
+        ->toResponse($trackingRequest)
+        ->getData(true)['props'];
+
+    expect($trackingProps['proposals'])->toHaveCount(1)
+        ->and($trackingProps['proposals'][0]['can_review'])->toBeTrue()
+        ->and($trackingProps['proposals'][0]['is_main_reviewer'])->toBeTrue();
+
     app(ProposalController::class)->review($request, $proposal);
 
     expect($proposal->fresh()->completed_at)->not->toBeNull()

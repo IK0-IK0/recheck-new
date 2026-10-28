@@ -1202,8 +1202,17 @@ export default function ActionModal({
                                         (group, index) => (
                                             <div
                                                 key={group.id}
-                                                className="grid gap-4 rounded-xl border border-border bg-background p-4 sm:p-5"
+                                                className={`grid gap-4 rounded-xl border bg-background p-4 sm:p-5 ${
+                                                    values.action_type === 'review' && index === 0
+                                                        ? 'border-primary ring-2 ring-primary/20'
+                                                        : 'border-border'
+                                                }`}
                                             >
+                                                {values.action_type === 'review' && index === 0 ? (
+                                                    <p className="w-fit rounded-full border border-primary/40 px-2.5 py-1 text-xs font-semibold text-primary">
+                                                        Main reviewer role
+                                                    </p>
+                                                ) : null}
                                                 <div
                                                     className={
                                                         values.action_type ===

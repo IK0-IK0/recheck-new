@@ -64,7 +64,10 @@ class ProposalController extends Controller
             $proposalsQuery->where('institution_id', $institutionId);
         }
 
-        if (! $this->userHasPermission($request, 'proposal.view.all')) {
+        if (
+            ! $this->userHasPermission($request, 'proposal.view.all')
+            && ! $this->isInstitutionAccount($request)
+        ) {
             $roleIds = $this->userRoleIds($request);
             $assignedActionIds = $this->assignedReviewActionIds($roleIds);
 
@@ -117,14 +120,15 @@ class ProposalController extends Controller
                 && ($hasMainReviewerRole
                     ? $isMainReviewer || $currentAssignment !== null
                     : $this->userCanReviewAction($request, $currentAction));
-            $canSubmitFinalDecision = $isMainReviewer
-                && $reviewerAssignments->isNotEmpty()
-                && $reviewerAssignments->every(
-                    fn (ProposalActionReviewer $reviewer): bool => $reviewer->responded_at !== null,
-                );
             $mainReviewerRoleId = $currentAction?->action_type === 'review'
                 ? $reviewAssignments->mainReviewerRoleId($currentAction)
                 : null;
+            $canSubmitFinalDecision = $isMainReviewer
+                && ($reviewerAssignments->isNotEmpty()
+                    ? $reviewerAssignments->every(
+                        fn (ProposalActionReviewer $reviewer): bool => $reviewer->responded_at !== null,
+                    )
+                    : $mainReviewerRoleId === null || $this->isInstitutionAccount($request));
             $reviewCandidates = $mainReviewerRoleId === null
                 ? []
                 : $reviewAssignments->usersForRoles($request, [$mainReviewerRoleId]);
@@ -1181,13 +1185,13 @@ class ProposalController extends Controller
                 ->where('action_id', $action->id)
                 ->where('round', $reviewRound);
 
-            if (! $reviewers->exists()) {
+            if (! $reviewers->exists() && ! $this->isInstitutionAccount($request)) {
                 throw ValidationException::withMessages([
                     'decision' => 'Assign at least one additional reviewer before submitting a final decision.',
                 ]);
             }
 
-            if ((clone $reviewers)->whereNull('responded_at')->exists()) {
+            if ($reviewers->exists() && (clone $reviewers)->whereNull('responded_at')->exists()) {
                 throw ValidationException::withMessages([
                     'decision' => 'Wait until every assigned reviewer has submitted a recommendation.',
                 ]);
@@ -1252,11 +1256,11 @@ class ProposalController extends Controller
                         ->where('proposal_id', $lockedProposal->id)
                         ->where('action_id', $action->id)
                         ->where('round', $round);
-                    if (! $reviewers->exists()) {
+                    if (! $reviewers->exists() && ! $this->isInstitutionAccount($request)) {
                         return ['error' => 'Assign at least one additional reviewer before submitting a final decision.'];
                     }
 
-                    if ((clone $reviewers)->whereNull('responded_at')->exists()) {
+                    if ($reviewers->exists() && (clone $reviewers)->whereNull('responded_at')->exists()) {
                         return ['error' => 'Wait until every assigned reviewer has submitted a recommendation.'];
                     }
                 } elseif (! $this->userCanReviewAction($request, $action)) {
@@ -1503,8 +1507,18 @@ class ProposalController extends Controller
     {
         $mainReviewerRoleId = $this->mainReviewerRoleId($action);
 
-        return $mainReviewerRoleId !== null
-            && in_array($mainReviewerRoleId, $this->userRoleIds($request), true);
+        return $this->isInstitutionAccount($request)
+            || ($mainReviewerRoleId !== null
+                && in_array($mainReviewerRoleId, $this->userRoleIds($request), true));
+    }
+
+    private function isInstitutionAccount(Request $request): bool
+    {
+        $user = $request->user();
+
+        return $user instanceof User
+            && ! ($user instanceof SuperadminTenantUser)
+            && $user->role === 'institution';
     }
 
     private function currentReviewRound(Proposal $proposal, Action $action): int
@@ -1539,13 +1553,7 @@ class ProposalController extends Controller
 
     private function userCanReviewAction(Request $request, Action $action): bool
     {
-        $user = $request->user();
-
-        if (
-            $user instanceof User
-            && ! ($user instanceof SuperadminTenantUser)
-            && $user->role === 'institution'
-        ) {
+        if ($this->isInstitutionAccount($request)) {
             return true;
         }
 
@@ -1586,12 +1594,7 @@ class ProposalController extends Controller
             ->unique()
             ->values();
 
-        $user = $request->user();
-        $isInstitutionReviewer = $user instanceof User
-            && ! ($user instanceof SuperadminTenantUser)
-            && $user->role === 'institution';
-
-        if ($isInstitutionReviewer) {
+        if ($this->isInstitutionAccount($request)) {
             return $reviewerGroups
                 ->flatMap(fn (array $group): array => $group['document_ids'] ?? [])
                 ->map(fn ($id): int => (int) $id)
