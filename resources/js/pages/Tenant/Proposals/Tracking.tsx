@@ -205,6 +205,8 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
     const [selectedMemberRecommendation, setSelectedMemberRecommendation] = useState('');
     const [memberRecommendationComment, setMemberRecommendationComment] = useState('');
     const [reviewerSelections, setReviewerSelections] = useState<Record<number, Record<string, string>>>({});
+    const [openReviewerGroupId, setOpenReviewerGroupId] = useState<string | null>(null);
+    const [reviewerSearchQuery, setReviewerSearchQuery] = useState('');
     const [filledReviewFormIds, setFilledReviewFormIds] = useState<number[]>([]);
     const [rejectedDocumentIds, setRejectedDocumentIds] = useState<number[]>([]);
     const [rejectedDocumentComments, setRejectedDocumentComments] = useState<
@@ -1340,45 +1342,117 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                                 Assign one person to each group. Submit your decision after everyone responds.
                                             </p>
                                         </div>
-                                        <div className="grid gap-3 sm:grid-cols-2">
+                                        <div className="divide-y rounded-md border border-border">
                                             {reviewerGroups.map((group) => (
-                                                <div key={group.id} className="space-y-2 rounded-md border border-border p-3">
-                                                    <div>
+                                                <div
+                                                    key={group.id}
+                                                    className="grid gap-3 p-3 sm:grid-cols-[minmax(0,1fr)_minmax(16rem,1fr)] sm:items-center"
+                                                >
+                                                    <div className="min-w-0">
                                                         <p className="text-sm font-medium">{group.name}</p>
                                                         <p className="text-xs text-muted-foreground">
                                                             {group.candidates.length} eligible user{group.candidates.length === 1 ? '' : 's'}
                                                         </p>
                                                     </div>
                                                     {group.candidates.length > 0 ? (
-                                                        <Select
-                                                            value={selectedReviewerSelections[reviewerSelectionKey(group.id)] ?? ''}
-                                                            onValueChange={(reviewerId) => handleReviewerSelection(reviewerSelectionKey(group.id), reviewerId)}
-                                                            disabled={isSubmittingDecision || hasReviewerResponded}
-                                                        >
-                                                            <SelectTrigger aria-label={`Reviewer for ${group.name}`}>
-                                                                <SelectValue placeholder="Choose a reviewer" />
-                                                            </SelectTrigger>
-                                                            <SelectContent>
-                                                                {group.candidates.map((candidate) => {
-                                                                    const reviewerId = `${candidate.user_type}:${candidate.id}`;
-                                                                    const assignedToAnotherGroup = reviewerGroups.some(
-                                                                        (otherGroup) =>
-                                                                            otherGroup.id !== group.id
-                                                                            && selectedReviewerSelections[reviewerSelectionKey(otherGroup.id)] === reviewerId,
+                                                        <div className="relative min-w-0">
+                                                            <Button
+                                                                type="button"
+                                                                variant="outline"
+                                                                className="w-full justify-between"
+                                                                aria-expanded={openReviewerGroupId === group.id}
+                                                                aria-label={`Search users for ${group.name}`}
+                                                                disabled={isSubmittingDecision || hasReviewerResponded}
+                                                                onClick={() => {
+                                                                    setOpenReviewerGroupId((current) =>
+                                                                        current === group.id ? null : group.id,
                                                                     );
+                                                                    setReviewerSearchQuery('');
+                                                                }}
+                                                            >
+                                                                <span className="flex min-w-0 items-center gap-2">
+                                                                    <Search className="size-4 shrink-0" />
+                                                                    <span className="truncate">
+                                                                        {group.candidates.find(
+                                                                            (candidate) =>
+                                                                                `${candidate.user_type}:${candidate.id}`
+                                                                                === selectedReviewerSelections[reviewerSelectionKey(group.id)],
+                                                                        )?.name ?? 'Search users'}
+                                                                    </span>
+                                                                </span>
+                                                                <span className="text-xs text-muted-foreground">
+                                                                    {selectedReviewerSelections[reviewerSelectionKey(group.id)]
+                                                                        ? 'Change'
+                                                                        : 'Choose'}
+                                                                </span>
+                                                            </Button>
+                                                            {openReviewerGroupId === group.id ? (
+                                                                <div className="absolute bottom-[calc(100%+0.5rem)] right-0 z-50 w-full rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-md">
+                                                                    <div className="relative mb-2">
+                                                                        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                                                                        <Input
+                                                                            autoFocus
+                                                                            value={reviewerSearchQuery}
+                                                                            onChange={(event) => setReviewerSearchQuery(event.target.value)}
+                                                                            placeholder="Search users"
+                                                                            aria-label={`Search users for ${group.name}`}
+                                                                            className="pl-9"
+                                                                        />
+                                                                    </div>
+                                                                    <ul className="custom-scrollbar max-h-48 space-y-1 overflow-y-auto">
+                                                                        {group.candidates
+                                                                            .filter((candidate) =>
+                                                                                `${candidate.name} ${candidate.email}`
+                                                                                    .toLocaleLowerCase()
+                                                                                    .includes(reviewerSearchQuery.trim().toLocaleLowerCase()),
+                                                                            )
+                                                                            .map((candidate) => {
+                                                                                const reviewerId = `${candidate.user_type}:${candidate.id}`;
+                                                                                const assignedToAnotherGroup = reviewerGroups.some(
+                                                                                    (otherGroup) =>
+                                                                                        otherGroup.id !== group.id
+                                                                                        && selectedReviewerSelections[reviewerSelectionKey(otherGroup.id)] === reviewerId,
+                                                                                );
 
-                                                                    return (
-                                                                        <SelectItem
-                                                                            key={reviewerId}
-                                                                            value={reviewerId}
-                                                                            disabled={assignedToAnotherGroup}
-                                                                        >
-                                                                            {candidate.name} · {candidate.email}
-                                                                        </SelectItem>
-                                                                    );
-                                                                })}
-                                                            </SelectContent>
-                                                        </Select>
+                                                                                return (
+                                                                                    <li key={reviewerId}>
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            className="flex w-full items-center justify-between gap-3 rounded-sm px-3 py-2 text-left text-sm hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                                                                                            disabled={assignedToAnotherGroup}
+                                                                                            onClick={() => {
+                                                                                                handleReviewerSelection(
+                                                                                                    reviewerSelectionKey(group.id),
+                                                                                                    reviewerId,
+                                                                                                );
+                                                                                                setOpenReviewerGroupId(null);
+                                                                                                setReviewerSearchQuery('');
+                                                                                            }}
+                                                                                        >
+                                                                                            <span className="min-w-0">
+                                                                                                <span className="block truncate font-medium">{candidate.name}</span>
+                                                                                                <span className="block truncate text-xs text-muted-foreground">{candidate.email}</span>
+                                                                                            </span>
+                                                                                            {assignedToAnotherGroup ? (
+                                                                                                <span className="shrink-0 text-xs text-muted-foreground">Assigned</span>
+                                                                                            ) : null}
+                                                                                        </button>
+                                                                                    </li>
+                                                                                );
+                                                                            })}
+                                                                    </ul>
+                                                                    {group.candidates.filter((candidate) =>
+                                                                        `${candidate.name} ${candidate.email}`
+                                                                            .toLocaleLowerCase()
+                                                                            .includes(reviewerSearchQuery.trim().toLocaleLowerCase()),
+                                                                    ).length === 0 ? (
+                                                                        <p className="px-3 py-4 text-center text-sm text-muted-foreground">
+                                                                            No users match your search.
+                                                                        </p>
+                                                                    ) : null}
+                                                                </div>
+                                                            ) : null}
+                                                        </div>
                                                     ) : (
                                                         <p className="text-sm text-muted-foreground">
                                                             No Users Management accounts are assigned to this group's role.
@@ -1450,36 +1524,19 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                                     ))}
                                                 </SelectContent>
                                             </Select>
-                                            {requiresAdditionalReviewers
-                                            && (!hasAssignedReviewers || hasUnsavedReviewerChanges) ? (
-                                                <Button
-                                                    type="button"
-                                                    disabled={
-                                                        isSubmittingDecision
-                                                        || hasReviewerResponded
-                                                        || !hasUnsavedReviewerChanges
-                                                        || reviewerGroups.some((group) => !selectedReviewerSelections[reviewerSelectionKey(group.id)])
-                                                    }
-                                                    onClick={handleSaveReviewers}
-                                                >
-                                                    {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                                                    {hasAssignedReviewers ? 'Update assignments' : 'Assign reviewers'}
-                                                </Button>
-                                            ) : (
-                                                <Button
-                                                    type="button"
-                                                    disabled={
-                                                        isSubmittingDecision
-                                                        || reviewDecision === ''
-                                                        || !assignedReviewDocumentsComplete
-                                                        || !selectedProposal.can_submit_decision
-                                                    }
-                                                    onClick={() => handleReviewDecision(reviewDecision)}
-                                                >
-                                                    {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                                                    Submit decision
-                                                </Button>
-                                            )}
+                                            <Button
+                                                type="button"
+                                                disabled={
+                                                    isSubmittingDecision
+                                                    || reviewDecision === ''
+                                                    || !assignedReviewDocumentsComplete
+                                                    || !selectedProposal.can_submit_decision
+                                                }
+                                                onClick={() => handleReviewDecision(reviewDecision)}
+                                            >
+                                                {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                                                Submit decision
+                                            </Button>
                                         </div>
                                         {hasAssignedReviewers && !selectedProposal.can_submit_decision ? (
                                             <p className="text-right text-xs text-muted-foreground">
@@ -1542,6 +1599,26 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                             </>
                                         )}
                                     </section>
+                                ) : null}
+
+                                {selectedProposal.is_main_reviewer
+                                && selectedProposal.current_action?.action_type === 'review' ? (
+                                    <footer className="mt-auto flex shrink-0 justify-end border-t border-border bg-background pt-4">
+                                        <Button
+                                            type="button"
+                                            disabled={
+                                                !requiresAdditionalReviewers
+                                                || isSubmittingDecision
+                                                || hasReviewerResponded
+                                                || !hasUnsavedReviewerChanges
+                                                || reviewerGroups.some((group) => !selectedReviewerSelections[reviewerSelectionKey(group.id)])
+                                            }
+                                            onClick={handleSaveReviewers}
+                                        >
+                                            {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                                            {hasAssignedReviewers ? 'Update assignments' : 'Assign reviewers'}
+                                        </Button>
+                                    </footer>
                                 ) : null}
                         </>
                     ) : null}
