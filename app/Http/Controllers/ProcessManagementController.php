@@ -9,7 +9,6 @@ use App\Models\Process;
 use App\Models\Proposal;
 use App\Models\Role;
 use App\Models\SuperadminTenantUser;
-use App\Services\ReviewAssignmentService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -22,7 +21,7 @@ class ProcessManagementController extends Controller
     /**
      * Display all processes with their nested phases and actions.
      */
-    public function index(Request $request, ReviewAssignmentService $reviewAssignments): Response
+    public function index(Request $request): Response
     {
         $processes = Process::with([
             'phases' => fn ($query) => $query->orderBy('order')->orderBy('id'),
@@ -98,10 +97,6 @@ class ProcessManagementController extends Controller
             'roles' => $roles,
             'documents' => $documents,
             'proposals' => $proposals,
-            'reviewerUsers' => $reviewAssignments->usersForRoles(
-                $request,
-                $roles->modelKeys(),
-            ),
         ]);
     }
 
@@ -277,11 +272,8 @@ class ProcessManagementController extends Controller
     /**
      * Store a newly created action for the given phase.
      */
-    public function storeAction(
-        Request $request,
-        Phase $phase,
-        ReviewAssignmentService $reviewAssignments,
-    ): RedirectResponse {
+    public function storeAction(Request $request, Phase $phase): RedirectResponse
+    {
         $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'action_type' => ['required', 'in:review,submit'],
@@ -296,10 +288,13 @@ class ProcessManagementController extends Controller
             'custom_decision_branches.*.label' => ['required', 'string', 'max:100', 'distinct:ignore_case'],
             'custom_decision_branches.*.destination' => $this->customDecisionDestinationRules($phase, null),
             'reviewer_groups' => [
-                'sometimes',
+                $request->input('action_type') === 'review' ? 'required' : 'sometimes',
                 'array',
                 $request->input('action_type') === 'submit' ? 'max:1' : 'max:20',
             ],
+            'reviewer_groups.0.role_ids' => $request->input('action_type') === 'review'
+                ? ['required', 'array', 'size:1']
+                : ['sometimes', 'array'],
             'reviewer_groups.*.id' => ['required_with:reviewer_groups', 'string', 'max:255', 'distinct'],
             'reviewer_groups.*.name' => ['required_with:reviewer_groups', 'string', 'max:100'],
             'reviewer_groups.*.role_ids' => ['sometimes', 'array', 'max:1'],
@@ -344,17 +339,12 @@ class ProcessManagementController extends Controller
                     $fail('The selected role is invalid.');
                 }
             }],
-            'main_reviewer' => $this->mainReviewerRules($request, $reviewAssignments),
         ]);
 
         $nextOrder = ($phase->actions()->max('order') ?? 0) + 1;
         $actionType = $request->input('action_type', 'review');
         $decisionMode = $request->input('decision_mode', 'approve_deny');
         $requiresFile = $actionType === 'submit' || (bool) $request->input('requires_file', false);
-        $mainReviewer = $actionType === 'review'
-            ? $this->mainReviewerIdentity($request->input('main_reviewer'))
-            : null;
-
         $action = $phase->actions()->create([
             'name' => $request->input('name'),
             'description' => $request->input('description'),
@@ -367,8 +357,6 @@ class ProcessManagementController extends Controller
                 ? $request->input('custom_decision_branches', [])
                 : [],
             'reviewer_groups' => $request->input('reviewer_groups', []),
-            'main_reviewer_user_id' => $mainReviewer['id'] ?? null,
-            'main_reviewer_user_type' => $mainReviewer['type'] ?? null,
             'order' => $nextOrder,
         ]);
 
@@ -384,7 +372,6 @@ class ProcessManagementController extends Controller
     public function updateAction(
         Request $request,
         Action $action,
-        ReviewAssignmentService $reviewAssignments,
     ): RedirectResponse {
         $request->validate([
             'name' => ['required', 'string', 'max:255'],
@@ -400,10 +387,13 @@ class ProcessManagementController extends Controller
             'custom_decision_branches.*.label' => ['required', 'string', 'max:100', 'distinct:ignore_case'],
             'custom_decision_branches.*.destination' => $this->customDecisionDestinationRules($action->phase, $action),
             'reviewer_groups' => [
-                'sometimes',
+                $request->input('action_type') === 'review' ? 'required' : 'sometimes',
                 'array',
                 $request->input('action_type') === 'submit' ? 'max:1' : 'max:20',
             ],
+            'reviewer_groups.0.role_ids' => $request->input('action_type') === 'review'
+                ? ['required', 'array', 'size:1']
+                : ['sometimes', 'array'],
             'reviewer_groups.*.id' => ['required_with:reviewer_groups', 'string', 'max:255', 'distinct'],
             'reviewer_groups.*.name' => ['required_with:reviewer_groups', 'string', 'max:100'],
             'reviewer_groups.*.role_ids' => ['sometimes', 'array', 'max:1'],
@@ -448,16 +438,11 @@ class ProcessManagementController extends Controller
                     $fail('The selected role is invalid.');
                 }
             }],
-            'main_reviewer' => $this->mainReviewerRules($request, $reviewAssignments),
         ]);
 
         $actionType = $request->input('action_type', 'review');
         $decisionMode = $request->input('decision_mode', 'approve_deny');
         $requiresFile = $actionType === 'submit' || (bool) $request->input('requires_file', false);
-        $mainReviewer = $actionType === 'review'
-            ? $this->mainReviewerIdentity($request->input('main_reviewer'))
-            : null;
-
         $action->update([
             'name' => $request->input('name'),
             'description' => $request->input('description'),
@@ -470,60 +455,11 @@ class ProcessManagementController extends Controller
                 ? $request->input('custom_decision_branches', [])
                 : [],
             'reviewer_groups' => $request->input('reviewer_groups', $action->reviewer_groups ?? []),
-            'main_reviewer_user_id' => $mainReviewer['id'] ?? null,
-            'main_reviewer_user_type' => $mainReviewer['type'] ?? null,
         ]);
         $action->roles()->sync($this->assignmentIds($request, 'role_ids'));
         $action->documents()->sync($this->assignmentIds($request, 'document_ids'));
 
         return redirect()->back();
-    }
-
-    /**
-     * @return array<int, string|\Closure>
-     */
-    private function mainReviewerRules(
-        Request $request,
-        ReviewAssignmentService $reviewAssignments,
-    ): array {
-        return [
-            'required_if:action_type,review',
-            'string',
-            function (string $attribute, mixed $value, \Closure $fail) use ($request, $reviewAssignments): void {
-                if ($value === null || $value === '') {
-                    return;
-                }
-
-                $identity = $this->mainReviewerIdentity($value);
-
-                if (
-                    $identity === null
-                    || ! $reviewAssignments->isUserAssignedToRoles(
-                        $request,
-                        $identity['id'],
-                        $identity['type'],
-                        $this->assignmentIds($request, 'role_ids'),
-                    )
-                ) {
-                    $fail('Choose a main reviewer who belongs to an assigned reviewer role.');
-                }
-            },
-        ];
-    }
-
-    /**
-     * @return array{id: int, type: class-string}|null
-     */
-    private function mainReviewerIdentity(mixed $value): ?array
-    {
-        if (! is_string($value) || ! preg_match('/^(App\\\\Models\\\\(?:TenantUser|SuperadminTenantUser)):(\d+)$/', $value, $matches)) {
-            return null;
-        }
-
-        return [
-            'id' => (int) $matches[2],
-            'type' => $matches[1],
-        ];
     }
 
     /**

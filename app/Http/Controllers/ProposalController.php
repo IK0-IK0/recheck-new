@@ -94,7 +94,7 @@ class ProposalController extends Controller
         $proposals->each(function (Proposal $proposal) use ($request, $reviewAssignments): void {
             $currentAction = $proposal->currentAction;
             $isMainReviewer = $currentAction?->action_type === 'review'
-                && $this->isConfiguredMainReviewer($request, $currentAction);
+                && $this->isMainReviewer($request, $currentAction);
             $reviewRound = $currentAction?->action_type === 'review'
                 ? $this->currentReviewRound($proposal, $currentAction)
                 : null;
@@ -111,22 +111,23 @@ class ProposalController extends Controller
                 fn (ProposalActionReviewer $reviewer): bool => (int) $reviewer->user_id === $currentIdentity['user_id']
                     && $reviewer->user_type === $currentIdentity['user_type'],
             );
-            $hasConfiguredMainReviewer = $currentAction?->main_reviewer_user_id !== null
-                && $currentAction?->main_reviewer_user_type !== null;
+            $hasMainReviewerRole = $currentAction !== null
+                && $this->mainReviewerRoleId($currentAction) !== null;
             $canReview = $currentAction?->action_type === 'review'
-                && ($hasConfiguredMainReviewer
+                && ($hasMainReviewerRole
                     ? $isMainReviewer || $currentAssignment !== null
                     : $this->userCanReviewAction($request, $currentAction));
             $canSubmitFinalDecision = $isMainReviewer
+                && $reviewerAssignments->isNotEmpty()
                 && $reviewerAssignments->every(
                     fn (ProposalActionReviewer $reviewer): bool => $reviewer->responded_at !== null,
                 );
-            $reviewCandidates = $currentAction?->action_type === 'review'
-                ? $reviewAssignments->usersForRoles(
-                    $request,
-                    $reviewAssignments->roleIdsForAction($currentAction),
-                )
-                : [];
+            $mainReviewerRoleId = $currentAction?->action_type === 'review'
+                ? $reviewAssignments->mainReviewerRoleId($currentAction)
+                : null;
+            $reviewCandidates = $mainReviewerRoleId === null
+                ? []
+                : $reviewAssignments->usersForRoles($request, [$mainReviewerRoleId]);
             $reviewerNames = collect($reviewCandidates)->keyBy(
                 fn (array $candidate): string => $candidate['user_type'].':'.$candidate['id'],
             );
@@ -136,7 +137,7 @@ class ProposalController extends Controller
             );
             $proposal->setAttribute(
                 'is_additional_reviewer',
-                $currentAssignment !== null && ! $isMainReviewer,
+                $currentAssignment !== null,
             );
             $proposal->setAttribute('can_submit_final_decision', $canSubmitFinalDecision);
             $proposal->setAttribute(
@@ -1014,15 +1015,17 @@ class ProposalController extends Controller
 
         $action = Action::query()->find($proposal->current_action_id);
         abort_unless($action?->action_type === 'review', 409);
-        abort_unless($this->isConfiguredMainReviewer($request, $action), 403);
+        abort_unless($this->isMainReviewer($request, $action), 403);
 
         $validated = $request->validate([
-            'reviewers' => ['present', 'array', 'max:20'],
+            'reviewers' => ['required', 'array', 'min:1', 'max:20'],
             'reviewers.*' => ['required', 'string', 'distinct'],
         ]);
+        $mainRoleId = $reviewAssignments->mainReviewerRoleId($action);
+        abort_unless($mainRoleId !== null, 409);
         $eligibleReviewers = collect($reviewAssignments->usersForRoles(
             $request,
-            $reviewAssignments->roleIdsForAction($action),
+            [$mainRoleId],
         ))->keyBy(fn (array $candidate): string => $candidate['user_type'].':'.$candidate['id']);
         $mainReviewer = $reviewAssignments->identity($request);
 
@@ -1035,12 +1038,12 @@ class ProposalController extends Controller
                     && $candidate['user_type'] === $mainReviewer['user_type'])
             ) {
                 throw ValidationException::withMessages([
-                    'reviewers' => 'Choose additional reviewers from the roles assigned to this action.',
+                    'reviewers' => 'Choose additional reviewers from the main reviewer role.',
                 ]);
             }
         }
 
-        DB::connection('tenant')->transaction(function () use ($proposal, $action, $validated, $mainReviewer): void {
+        DB::connection('tenant')->transaction(function () use ($request, $proposal, $action, $validated, $mainReviewer): void {
             $lockedProposal = Proposal::query()
                 ->whereKey($proposal->id)
                 ->lockForUpdate()
@@ -1051,6 +1054,8 @@ class ProposalController extends Controller
                     'reviewers' => 'The proposal has moved to another action.',
                 ]);
             }
+
+            abort_unless($this->isMainReviewer($request, $action), 403);
 
             $round = $this->currentReviewRound($lockedProposal, $action);
             $existingReviewers = ProposalActionReviewer::query()
@@ -1161,25 +1166,28 @@ class ProposalController extends Controller
         $action = Action::query()->find($proposal->current_action_id);
 
         abort_unless($action && $action->action_type === 'review', 409);
-        $isMainReviewer = $action->main_reviewer_user_id !== null
-            && $action->main_reviewer_user_type !== null;
+        $hasMainReviewerRole = $this->mainReviewerRoleId($action) !== null;
         abort_unless(
-            $isMainReviewer
-                ? $this->isConfiguredMainReviewer($request, $action)
+            $hasMainReviewerRole
+                ? $this->isMainReviewer($request, $action)
                 : $this->userCanReviewAction($request, $action),
             403,
         );
 
-        if ($isMainReviewer) {
+        if ($hasMainReviewerRole) {
             $reviewRound = $this->currentReviewRound($proposal, $action);
-            $pendingReviewers = ProposalActionReviewer::query()
+            $reviewers = ProposalActionReviewer::query()
                 ->where('proposal_id', $proposal->id)
                 ->where('action_id', $action->id)
-                ->where('round', $reviewRound)
-                ->whereNull('responded_at')
-                ->exists();
+                ->where('round', $reviewRound);
 
-            if ($pendingReviewers) {
+            if (! $reviewers->exists()) {
+                throw ValidationException::withMessages([
+                    'decision' => 'Assign at least one additional reviewer before submitting a final decision.',
+                ]);
+            }
+
+            if ((clone $reviewers)->whereNull('responded_at')->exists()) {
                 throw ValidationException::withMessages([
                     'decision' => 'Wait until every assigned reviewer has submitted a recommendation.',
                 ]);
@@ -1234,18 +1242,21 @@ class ProposalController extends Controller
             }
 
             if ($action->action_type === 'review') {
-                if ($action->main_reviewer_user_id !== null) {
-                    if (! $this->isConfiguredMainReviewer($request, $action)) {
+                if ($this->mainReviewerRoleId($action) !== null) {
+                    if (! $this->isMainReviewer($request, $action)) {
                         return ['error' => 'Only the main reviewer can submit the final decision.'];
                     }
 
                     $round = $this->currentReviewRound($lockedProposal, $action);
-                    if (ProposalActionReviewer::query()
+                    $reviewers = ProposalActionReviewer::query()
                         ->where('proposal_id', $lockedProposal->id)
                         ->where('action_id', $action->id)
-                        ->where('round', $round)
-                        ->whereNull('responded_at')
-                        ->exists()) {
+                        ->where('round', $round);
+                    if (! $reviewers->exists()) {
+                        return ['error' => 'Assign at least one additional reviewer before submitting a final decision.'];
+                    }
+
+                    if ((clone $reviewers)->whereNull('responded_at')->exists()) {
                         return ['error' => 'Wait until every assigned reviewer has submitted a recommendation.'];
                     }
                 } elseif (! $this->userCanReviewAction($request, $action)) {
@@ -1480,11 +1491,20 @@ class ProposalController extends Controller
         return in_array($decision, ['approve', 'deny'], true);
     }
 
-    private function isConfiguredMainReviewer(Request $request, Action $action): bool
+    private function mainReviewerRoleId(Action $action): ?int
     {
-        return $action->main_reviewer_user_id !== null
-            && (int) $action->main_reviewer_user_id === (int) $request->user()->getKey()
-            && $action->main_reviewer_user_type === $request->user()::class;
+        $roleId = collect($action->reviewer_groups ?? [])
+            ->first()['role_ids'][0] ?? null;
+
+        return is_numeric($roleId) ? (int) $roleId : null;
+    }
+
+    private function isMainReviewer(Request $request, Action $action): bool
+    {
+        $mainReviewerRoleId = $this->mainReviewerRoleId($action);
+
+        return $mainReviewerRoleId !== null
+            && in_array($mainReviewerRoleId, $this->userRoleIds($request), true);
     }
 
     private function currentReviewRound(Proposal $proposal, Action $action): int
@@ -1652,11 +1672,11 @@ class ProposalController extends Controller
         Proposal $proposal,
         Action $action,
     ): bool {
-        if ($action->main_reviewer_user_id === null || $action->main_reviewer_user_type === null) {
+        if ($this->mainReviewerRoleId($action) === null) {
             return $this->userCanReviewAction($request, $action);
         }
 
-        if ($this->isConfiguredMainReviewer($request, $action)) {
+        if ($this->isMainReviewer($request, $action)) {
             return true;
         }
 

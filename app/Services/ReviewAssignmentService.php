@@ -96,14 +96,12 @@ class ReviewAssignmentService
         ]));
     }
 
-    public function isUserAssignedToRoles(
-        Request $request,
-        int $userId,
-        string $userType,
-        array $roleIds,
-    ): bool {
-        return collect($this->usersForRoles($request, $roleIds))
-            ->contains(fn (array $user): bool => $user['id'] === $userId && $user['user_type'] === $userType);
+    public function mainReviewerRoleId(Action $action): ?int
+    {
+        $roleId = collect($action->reviewer_groups ?? [])
+            ->first()['role_ids'][0] ?? null;
+
+        return is_numeric($roleId) ? (int) $roleId : null;
     }
 
     /**

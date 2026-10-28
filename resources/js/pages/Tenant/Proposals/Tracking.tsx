@@ -792,9 +792,9 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                             {proposal.can_review
                                                 && proposal.current_action?.action_type === 'review'
                                                 && !proposal.completed_at
-                                                ? proposal.is_additional_reviewer
-                                                    ? 'Recommend'
-                                                    : 'Review'
+                                                ? proposal.is_main_reviewer
+                                                    ? 'Review'
+                                                    : 'Recommend'
                                                 : 'Details'}
                                         </Button>
                                     </td>
@@ -1294,7 +1294,7 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                             <div>
                                                 <h3 className="text-sm font-semibold">Additional reviewers</h3>
                                                 <p className="text-xs text-muted-foreground">
-                                                    Members submit recommendations; you make the final decision after all respond.
+                                                    The first assigned role is the main reviewer role. Assign at least one member from that role; you make the final decision after all respond.
                                                 </p>
                                             </div>
                                             {selectedProposal.review_reviewer_candidates?.length ? (
@@ -1325,7 +1325,7 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                                     type="button"
                                                     variant="outline"
                                                     size="sm"
-                                                    disabled={isSubmittingDecision || !hasUnsavedReviewerChanges || (selectedProposal.review_members ?? []).some((member) => member.responded_at !== null)}
+                                                    disabled={isSubmittingDecision || !hasUnsavedReviewerChanges || selectedReviewerIds.length === 0 || (selectedProposal.review_members ?? []).some((member) => member.responded_at !== null)}
                                                     onClick={handleSaveReviewers}
                                                 >
                                                     {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}

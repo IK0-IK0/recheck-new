@@ -53,8 +53,6 @@ class Action extends Model
         'decision_mode',
         'custom_decision_branches',
         'reviewer_groups',
-        'main_reviewer_user_id',
-        'main_reviewer_user_type',
     ];
 
     /**

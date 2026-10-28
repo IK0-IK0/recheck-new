@@ -11,6 +11,7 @@ use App\Models\ProposalActionReviewer;
 use App\Models\Role;
 use App\Models\SuperadminTenantUser;
 use App\Models\User;
+use App\Services\ReviewAssignmentService;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -606,16 +607,23 @@ test('rejection reviews persist comments for flagged proposal files', function (
         ]]);
 });
 
-test('additional reviewers recommend without advancing and the main reviewer decides after all respond', function () {
+test('main-role members can assign reviewers and final decisions wait for recommendations', function () {
     $process = Process::factory()->create();
     $phase = Phase::factory()->for($process)->create();
-    $mainReviewer = new User;
-    $mainReviewer->setAttribute($mainReviewer->getKeyName(), 1);
+    $mainReviewerRole = Role::create(['name' => 'Main reviewer']);
+    DB::connection('tenant')->table('role_tenant_user')->insert([
+        ['role_id' => $mainReviewerRole->id, 'tenant_user_id' => 1],
+        ['role_id' => $mainReviewerRole->id, 'tenant_user_id' => 2],
+    ]);
     $reviewAction = Action::factory()->for($phase)->create([
         'action_type' => 'review',
         'decision_mode' => 'approve_deny',
-        'main_reviewer_user_id' => 1,
-        'main_reviewer_user_type' => User::class,
+        'reviewer_groups' => [[
+            'id' => 'assignment-1',
+            'name' => 'Main reviewer role',
+            'role_ids' => [$mainReviewerRole->id],
+            'document_ids' => [],
+        ]],
     ]);
     $proposal = Proposal::create([
         'title' => 'Review coordination',
@@ -626,22 +634,46 @@ test('additional reviewers recommend without advancing and the main reviewer dec
         'current_phase_id' => $phase->id,
         'current_action_id' => $reviewAction->id,
     ]);
-    $reviewer = ProposalActionReviewer::query()->create([
-        'proposal_id' => $proposal->id,
-        'action_id' => $reviewAction->id,
-        'round' => 1,
-        'user_id' => 2,
-        'user_type' => SuperadminTenantUser::class,
-        'assigned_by_user_id' => 1,
-        'assigned_by_user_type' => User::class,
-    ]);
     $controller = app(ProposalController::class);
+    $mainReviewer = new SuperadminTenantUser;
+    $mainReviewer->setAttribute($mainReviewer->getKeyName(), 1);
+    $mainReviewer->setAttribute('institution_id', 1);
+    $assignmentRequest = Request::create(
+        '/tenant/proposals/'.$proposal->id.'/reviewers',
+        'PUT',
+        ['reviewers' => [SuperadminTenantUser::class.':2']],
+    );
+    $assignmentRequest->setUserResolver(fn (): SuperadminTenantUser => $mainReviewer);
+    $controller->assignReviewers($assignmentRequest, $proposal, app(ReviewAssignmentService::class));
+    $reviewer = ProposalActionReviewer::query()->firstOrFail();
+
+    $otherRoleMember = new SuperadminTenantUser;
+    $otherRoleMember->setAttribute($otherRoleMember->getKeyName(), 3);
+    $otherRoleMember->setAttribute('institution_id', 1);
+    DB::connection('tenant')->table('role_tenant_user')->insert([
+        'role_id' => $mainReviewerRole->id,
+        'tenant_user_id' => 3,
+    ]);
+    $takeoverRequest = Request::create(
+        '/tenant/proposals/'.$proposal->id.'/reviewers',
+        'PUT',
+        ['reviewers' => [SuperadminTenantUser::class.':2']],
+    );
+    $takeoverRequest->setUserResolver(fn (): SuperadminTenantUser => $otherRoleMember);
+    $controller->assignReviewers(
+        $takeoverRequest,
+        $proposal,
+        app(ReviewAssignmentService::class),
+    );
+
+    expect($reviewer->fresh()->assigned_by_user_id)->toBe(3);
+
     $mainRequest = Request::create(
         '/tenant/proposals/'.$proposal->id.'/review',
         'POST',
         ['decision' => 'approve'],
     );
-    $mainRequest->setUserResolver(fn (): User => $mainReviewer);
+    $mainRequest->setUserResolver(fn (): SuperadminTenantUser => $mainReviewer);
 
     expect(fn () => $controller->review($mainRequest, $proposal))
         ->toThrow(ValidationException::class)
