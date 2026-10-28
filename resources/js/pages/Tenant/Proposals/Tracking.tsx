@@ -94,7 +94,8 @@ type Proposal = {
     can_review?: boolean;
     is_main_reviewer?: boolean;
     is_additional_reviewer?: boolean;
-    can_submit_final_decision?: boolean;
+    requires_additional_reviewers?: boolean;
+    can_submit_decision?: boolean;
     review_members?: ReviewMember[];
     review_reviewer_candidates?: ReviewCandidate[];
     assigned_reviewer_ids?: string[];
@@ -194,6 +195,7 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
     const [selectedReviewDecision, setSelectedReviewDecision] = useState('');
     const [selectedMemberRecommendation, setSelectedMemberRecommendation] = useState('');
     const [memberRecommendationComment, setMemberRecommendationComment] = useState('');
+    const [isReviewerAssignmentDialogOpen, setIsReviewerAssignmentDialogOpen] = useState(false);
     const [reviewerSelections, setReviewerSelections] = useState<Record<number, string[]>>({});
     const [filledReviewFormIds, setFilledReviewFormIds] = useState<number[]>([]);
     const [rejectedDocumentIds, setRejectedDocumentIds] = useState<number[]>([]);
@@ -317,6 +319,11 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
         ? reviewerSelections[selectedProposal.id] ?? selectedProposal.assigned_reviewer_ids ?? []
         : [];
     const assignedReviewerIds = selectedProposal?.assigned_reviewer_ids ?? [];
+    const hasAssignedReviewers = assignedReviewerIds.length > 0;
+    const hasReviewerResponded = (selectedProposal?.review_members ?? []).some(
+        (member) => member.responded_at !== null,
+    );
+    const requiresAdditionalReviewers = selectedProposal?.requires_additional_reviewers ?? false;
     const hasUnsavedReviewerChanges = [...selectedReviewerIds].sort().join('|')
         !== [...assignedReviewerIds].sort().join('|');
     const isRejectingReview = isRejectionOutcome(
@@ -449,6 +456,7 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                 onStart: () => setIsSubmittingDecision(true),
                 onFinish: () => setIsSubmittingDecision(false),
                 onSuccess: () => {
+                    setIsReviewerAssignmentDialogOpen(false);
                     setReviewerSelections((current) => {
                         const next = { ...current };
                         delete next[selectedProposal.id];
@@ -934,7 +942,7 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                             </p>
                                         </div>
                                         {submittedFiles.length > 0 ? (
-                                            <ul className="max-h-36 space-y-2 overflow-y-auto">
+                                            <ul className="custom-scrollbar max-h-48 space-y-2 overflow-y-auto pr-1">
                                                 {submittedFiles.map((file) => (
                                                     <li key={file.id} className="relative">
                                                         <div
@@ -1114,7 +1122,7 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                             </div>
                                         </div>
                                         {assignedReviewDocuments.length > 0 ? (
-                                            <ul className="custom-scrollbar max-h-36 space-y-2 overflow-y-auto pr-1">
+                                            <ul className="custom-scrollbar max-h-48 space-y-2 overflow-y-auto pr-1">
                                                 {assignedReviewDocuments.map((reviewDocument) => {
                                                     const uploadedDocument =
                                                         selectedProposal.documents.find(
@@ -1290,50 +1298,45 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                 {selectedProposal.is_main_reviewer
                                 && selectedProposal.current_action?.action_type === 'review' ? (
                                     <section className="mt-auto shrink-0 space-y-4 border-t border-border bg-background pt-4">
-                                        <div className="space-y-2">
-                                            <div>
+                                        {requiresAdditionalReviewers ? (
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div>
                                                 <h3 className="text-sm font-semibold">Additional reviewers</h3>
                                                 <p className="text-xs text-muted-foreground">
-                                                    The first assigned role is the main reviewer role. Assign at least one member from that role; you make the final decision after all respond.
+                                                    Assign at least one member of the main reviewer role. You can submit your decision after everyone responds.
                                                 </p>
                                             </div>
-                                            {selectedProposal.review_reviewer_candidates?.length ? (
-                                                <div className="max-h-36 space-y-2 overflow-y-auto rounded-md border border-border p-3">
-                                                    {selectedProposal.review_reviewer_candidates.map((candidate) => {
-                                                        const reviewerId = `${candidate.user_type}:${candidate.id}`;
-
-                                                        return (
-                                                            <label key={reviewerId} className="flex items-center gap-2 text-sm">
-                                                                <Checkbox
-                                                                    checked={selectedReviewerIds.includes(reviewerId)}
-                                                                    disabled={isSubmittingDecision || (selectedProposal.review_members ?? []).some((member) => member.responded_at !== null)}
-                                                                    onCheckedChange={(checked) => handleReviewerSelection(reviewerId, checked)}
-                                                                />
-                                                                <span className="min-w-0 flex-1 truncate">{candidate.name}</span>
-                                                                <span className="truncate text-xs text-muted-foreground">{candidate.email}</span>
-                                                            </label>
-                                                        );
-                                                    })}
-                                                </div>
-                                            ) : (
+                                                {hasAssignedReviewers && !hasReviewerResponded ? (
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        disabled={isSubmittingDecision}
+                                                        onClick={() => setIsReviewerAssignmentDialogOpen(true)}
+                                                    >
+                                                        Edit reviewers
+                                                    </Button>
+                                                ) : null}
+                                            </div>
+                                        ) : null}
+                                        {requiresAdditionalReviewers && !hasAssignedReviewers ? (
+                                            <div className="space-y-2 rounded-md border border-dashed border-border p-3">
                                                 <p className="text-sm text-muted-foreground">
-                                                    No eligible additional reviewers are assigned to this action.
+                                                    Assign at least one additional reviewer before submitting a decision.
                                                 </p>
-                                            )}
-                                            <div className="flex justify-end">
                                                 <Button
                                                     type="button"
-                                                    variant="outline"
                                                     size="sm"
-                                                    disabled={isSubmittingDecision || !hasUnsavedReviewerChanges || selectedReviewerIds.length === 0 || (selectedProposal.review_members ?? []).some((member) => member.responded_at !== null)}
-                                                    onClick={handleSaveReviewers}
+                                                    disabled={isSubmittingDecision}
+                                                    onClick={() => setIsReviewerAssignmentDialogOpen(true)}
                                                 >
-                                                    {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                                                    Save reviewers
+                                                    Assign reviewers
                                                 </Button>
                                             </div>
-                                        </div>
-                                        {(selectedProposal.review_members ?? []).length > 0 ? (
+                                        ) : null}
+                                        {(!requiresAdditionalReviewers || hasAssignedReviewers) ? (
+                                            <>
+                                        {hasAssignedReviewers ? (
                                             <div className="space-y-2">
                                                 <h3 className="text-sm font-semibold">Reviewer recommendations</h3>
                                                 <ul className="max-h-36 space-y-2 overflow-y-auto">
@@ -1377,7 +1380,7 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                                 disabled={isSubmittingDecision || reviewDecisions.length === 0}
                                             >
                                                 <SelectTrigger className="w-full sm:max-w-xs [&>svg]:rotate-180">
-                                                    <SelectValue placeholder="Select a final decision" />
+                                                    <SelectValue placeholder="Select a decision" />
                                                 </SelectTrigger>
                                                 <SelectContent side="top">
                                                     {reviewDecisions.map((decision) => (
@@ -1393,18 +1396,20 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                                     isSubmittingDecision
                                                     || reviewDecision === ''
                                                     || !assignedReviewDocumentsComplete
-                                                    || !selectedProposal.can_submit_final_decision
+                                                    || !selectedProposal.can_submit_decision
                                                 }
                                                 onClick={() => handleReviewDecision(reviewDecision)}
                                             >
                                                 {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                                                Submit final decision
+                                                Submit decision
                                             </Button>
                                         </div>
-                                        {!selectedProposal.can_submit_final_decision ? (
+                                        {hasAssignedReviewers && !selectedProposal.can_submit_decision ? (
                                             <p className="text-right text-xs text-muted-foreground">
                                                 Waiting for all assigned reviewers to respond.
                                             </p>
+                                        ) : null}
+                                            </>
                                         ) : null}
                                     </section>
                                 ) : null}
@@ -1414,7 +1419,7 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                     <section className="mt-auto shrink-0 space-y-3 border-t border-border bg-background pt-4">
                                         {selectedProposal.member_decision ? (
                                             <p className="text-sm text-muted-foreground">
-                                                Your recommendation has been submitted. The main reviewer will make the final decision.
+                                                Your recommendation has been submitted. The main reviewer will make the decision.
                                             </p>
                                         ) : (
                                             <>
@@ -1467,6 +1472,66 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                     ) : null}
                 </SheetContent>
             </Sheet>
+
+            <Dialog
+                open={isReviewerAssignmentDialogOpen}
+                onOpenChange={setIsReviewerAssignmentDialogOpen}
+            >
+                <DialogContent className="sm:max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>Assign additional reviewers</DialogTitle>
+                        <DialogDescription>
+                            Select at least one member of the main reviewer role. You can submit your decision after everyone responds.
+                        </DialogDescription>
+                    </DialogHeader>
+                    {selectedProposal?.review_reviewer_candidates?.length ? (
+                        <div className="max-h-72 space-y-2 overflow-y-auto rounded-md border border-border p-3">
+                            {selectedProposal.review_reviewer_candidates.map((candidate) => {
+                                const reviewerId = `${candidate.user_type}:${candidate.id}`;
+
+                                return (
+                                    <label key={reviewerId} className="flex items-center gap-2 text-sm">
+                                        <Checkbox
+                                            checked={selectedReviewerIds.includes(reviewerId)}
+                                            disabled={isSubmittingDecision || hasReviewerResponded}
+                                            onCheckedChange={(checked) => handleReviewerSelection(reviewerId, checked)}
+                                        />
+                                        <span className="min-w-0 flex-1 truncate">{candidate.name}</span>
+                                        <span className="truncate text-xs text-muted-foreground">{candidate.email}</span>
+                                    </label>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <p className="text-sm text-muted-foreground">
+                            No other users are assigned to the main reviewer role. Assign the role to users, then reopen this modal.
+                        </p>
+                    )}
+                    <div className="flex justify-end gap-2">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            disabled={isSubmittingDecision}
+                            onClick={() => setIsReviewerAssignmentDialogOpen(false)}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            type="button"
+                            disabled={
+                                isSubmittingDecision
+                                || !hasUnsavedReviewerChanges
+                                || selectedReviewerIds.length === 0
+                                || hasReviewerResponded
+                            }
+                            onClick={handleSaveReviewers}
+                        >
+                            {isSubmittingDecision ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                            Save reviewers
+                        </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             <Dialog
                 open={documentToView !== null}

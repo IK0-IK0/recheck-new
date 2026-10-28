@@ -10,6 +10,7 @@ use App\Models\Proposal;
 use App\Models\ProposalActionReviewer;
 use App\Models\Role;
 use App\Models\SuperadminTenantUser;
+use App\Models\TenantUser;
 use App\Models\User;
 use App\Services\ReviewAssignmentService;
 use Illuminate\Database\Schema\Blueprint;
@@ -459,10 +460,28 @@ test('review decisions follow the configured action route and are recorded', fun
         ->and((int) $proposal->actionTransitions()->firstOrFail()->action_id)->toBe($reviewAction->id);
 });
 
-test('institution accounts can review proposals without assigned reviewer roles', function () {
+test('institution accounts must assign additional reviewers before making a decision', function () {
     $process = Process::factory()->create();
     $phase = Phase::factory()->for($process)->create();
     $reviewerRole = Role::factory()->create();
+    $otherReviewerRole = Role::factory()->create();
+    $assignedReviewer = TenantUser::query()->create([
+        'name' => 'Eligible reviewer',
+        'email' => 'eligible-reviewer@example.test',
+        'password' => 'test-password',
+    ]);
+    DB::connection('tenant')->table('role_user')->insert([
+        'role_id' => $reviewerRole->id,
+        'user_id' => $assignedReviewer->id,
+    ]);
+    $mainReviewerDocument = Document::factory()->create([
+        'name' => 'Main reviewer file',
+        'label' => 'doc',
+    ]);
+    $otherReviewerDocument = Document::factory()->create([
+        'name' => 'Other reviewer file',
+        'label' => 'doc',
+    ]);
     $reviewAction = Action::factory()->for($phase)->create([
         'action_type' => 'review',
         'decision_mode' => 'approve_deny',
@@ -470,7 +489,12 @@ test('institution accounts can review proposals without assigned reviewer roles'
             'id' => 'reviewer',
             'name' => 'Reviewer',
             'role_ids' => [$reviewerRole->id],
-            'document_ids' => [],
+            'document_ids' => [$mainReviewerDocument->id],
+        ], [
+            'id' => 'other-reviewer',
+            'name' => 'Other reviewer',
+            'role_ids' => [$otherReviewerRole->id],
+            'document_ids' => [$otherReviewerDocument->id],
         ]],
     ]);
     $proposal = Proposal::create([
@@ -498,13 +522,56 @@ test('institution accounts can review proposals without assigned reviewer roles'
 
     expect($trackingProps['proposals'])->toHaveCount(1)
         ->and($trackingProps['proposals'][0]['can_review'])->toBeTrue()
-        ->and($trackingProps['proposals'][0]['is_main_reviewer'])->toBeTrue();
+        ->and($trackingProps['proposals'][0]['is_main_reviewer'])->toBeTrue()
+        ->and($trackingProps['proposals'][0]['can_submit_decision'])->toBeFalse()
+        ->and(collect($trackingProps['proposals'][0]['review_reviewer_candidates'])->pluck('name')->all())
+        ->toContain('Eligible reviewer')
+        ->and(collect($trackingProps['proposals'][0]['review_documents'])->pluck('id')->all())
+        ->toBe([$mainReviewerDocument->id]);
 
-    app(ProposalController::class)->review($request, $proposal);
+    expect(fn () => app(ProposalController::class)->review($request, $proposal))
+        ->toThrow(ValidationException::class);
 
-    expect($proposal->fresh()->completed_at)->not->toBeNull()
-        ->and($proposal->actionTransitions()->firstOrFail()->decision)->toBe('approve')
-        ->and($proposal->actionTransitions()->firstOrFail()->user_id)->toBe(1);
+    expect($proposal->fresh()->completed_at)->toBeNull()
+        ->and($proposal->actionTransitions()->count())->toBe(0);
+});
+
+test('review assignment candidates include local and institution users in the selected role', function () {
+    $institution = User::factory()->create(['role' => 'institution']);
+    $reviewerRole = Role::factory()->create();
+
+    $localReviewer = TenantUser::query()->create([
+        'name' => 'Local reviewer',
+        'email' => 'local-reviewer@example.test',
+        'password' => 'test-password',
+    ]);
+    DB::connection('tenant')->table('role_user')->insert([
+        'role_id' => $reviewerRole->id,
+        'user_id' => $localReviewer->id,
+    ]);
+
+    $institutionReviewer = new SuperadminTenantUser;
+    $institutionReviewer->forceFill([
+        'institution_id' => $institution->id,
+        'name' => 'Institution reviewer',
+        'email' => 'institution-reviewer@example.test',
+        'password' => 'test-password',
+    ]);
+    $institutionReviewer->save();
+    DB::connection('tenant')->table('role_tenant_user')->insert([
+        'role_id' => $reviewerRole->id,
+        'tenant_user_id' => $institutionReviewer->id,
+    ]);
+
+    $request = Request::create('/tenant/proposals', 'GET');
+    $request->setUserResolver(fn (): User => $institution);
+    $candidates = app(ReviewAssignmentService::class)->usersForRoles(
+        $request,
+        [$reviewerRole->id],
+    );
+
+    expect(collect($candidates)->pluck('email')->all())
+        ->toContain('local-reviewer@example.test', 'institution-reviewer@example.test');
 });
 
 test('tracking provides documents assigned to the current reviewer group', function () {
@@ -620,7 +687,7 @@ test('rejection reviews persist comments for flagged proposal files', function (
         ]]);
 });
 
-test('main-role members can assign reviewers and final decisions wait for recommendations', function () {
+test('main-role members can assign reviewers and decisions wait for recommendations', function () {
     $process = Process::factory()->create();
     $phase = Phase::factory()->for($process)->create();
     $mainReviewerRole = Role::create(['name' => 'Main reviewer']);

@@ -123,12 +123,12 @@ class ProposalController extends Controller
             $mainReviewerRoleId = $currentAction?->action_type === 'review'
                 ? $reviewAssignments->mainReviewerRoleId($currentAction)
                 : null;
-            $canSubmitFinalDecision = $isMainReviewer
-                && ($reviewerAssignments->isNotEmpty()
-                    ? $reviewerAssignments->every(
-                        fn (ProposalActionReviewer $reviewer): bool => $reviewer->responded_at !== null,
-                    )
-                    : $mainReviewerRoleId === null || $this->isInstitutionAccount($request));
+            $canSubmitDecision = $isMainReviewer
+                && ($mainReviewerRoleId === null
+                    || ($reviewerAssignments->isNotEmpty()
+                        && $reviewerAssignments->every(
+                            fn (ProposalActionReviewer $reviewer): bool => $reviewer->responded_at !== null,
+                        )));
             $reviewCandidates = $mainReviewerRoleId === null
                 ? []
                 : $reviewAssignments->usersForRoles($request, [$mainReviewerRoleId]);
@@ -139,11 +139,12 @@ class ProposalController extends Controller
                 'is_main_reviewer',
                 $isMainReviewer,
             );
+            $proposal->setAttribute('requires_additional_reviewers', $mainReviewerRoleId !== null);
             $proposal->setAttribute(
                 'is_additional_reviewer',
                 $currentAssignment !== null,
             );
-            $proposal->setAttribute('can_submit_final_decision', $canSubmitFinalDecision);
+            $proposal->setAttribute('can_submit_decision', $canSubmitDecision);
             $proposal->setAttribute(
                 'review_members',
                 $isMainReviewer
@@ -1185,9 +1186,9 @@ class ProposalController extends Controller
                 ->where('action_id', $action->id)
                 ->where('round', $reviewRound);
 
-            if (! $reviewers->exists() && ! $this->isInstitutionAccount($request)) {
+            if (! $reviewers->exists()) {
                 throw ValidationException::withMessages([
-                    'decision' => 'Assign at least one additional reviewer before submitting a final decision.',
+                    'decision' => 'Assign at least one additional reviewer before submitting your decision.',
                 ]);
             }
 
@@ -1248,7 +1249,7 @@ class ProposalController extends Controller
             if ($action->action_type === 'review') {
                 if ($this->mainReviewerRoleId($action) !== null) {
                     if (! $this->isMainReviewer($request, $action)) {
-                        return ['error' => 'Only the main reviewer can submit the final decision.'];
+                        return ['error' => 'Only the main reviewer can submit this decision.'];
                     }
 
                     $round = $this->currentReviewRound($lockedProposal, $action);
@@ -1256,8 +1257,8 @@ class ProposalController extends Controller
                         ->where('proposal_id', $lockedProposal->id)
                         ->where('action_id', $action->id)
                         ->where('round', $round);
-                    if (! $reviewers->exists() && ! $this->isInstitutionAccount($request)) {
-                        return ['error' => 'Assign at least one additional reviewer before submitting a final decision.'];
+                    if (! $reviewers->exists()) {
+                        return ['error' => 'Assign at least one additional reviewer before submitting your decision.'];
                     }
 
                     if ($reviewers->exists() && (clone $reviewers)->whereNull('responded_at')->exists()) {
@@ -1588,21 +1589,18 @@ class ProposalController extends Controller
                 ->all();
         }
 
+        if ($this->mainReviewerRoleId($action) !== null && $this->isMainReviewer($request, $action)) {
+            return collect($reviewerGroups->first()['document_ids'] ?? [])
+                ->map(fn ($id): int => (int) $id)
+                ->unique()
+                ->all();
+        }
+
         $allGroupDocumentIds = $reviewerGroups
             ->flatMap(fn (array $group): array => $group['document_ids'] ?? [])
             ->map(fn ($id): int => (int) $id)
             ->unique()
             ->values();
-
-        if ($this->isInstitutionAccount($request)) {
-            return $reviewerGroups
-                ->flatMap(fn (array $group): array => $group['document_ids'] ?? [])
-                ->map(fn ($id): int => (int) $id)
-                ->unique()
-                ->values()
-                ->all();
-        }
-
         $userRoleIds = $this->userRoleIds($request);
         $assignedDocumentIds = $reviewerGroups
             ->filter(fn (array $group): bool => ($group['role_ids'] ?? []) === []
