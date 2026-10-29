@@ -16,6 +16,7 @@ import {
     DialogTrigger,
 } from '@/components/ui/dialog';
 import FileDropZone from '@/components/FileDropZone';
+import FormMaker from '@/components/FormMaker';
 
 /**
  * @param {{
@@ -24,9 +25,13 @@ import FileDropZone from '@/components/FileDropZone';
  *   onFileReplaced?: () => void,
  * }} props
  */
-export default function DocumentEditModal({ document, trigger, onFileReplaced }) {
-    const [open, setOpen] = useState(false);
+export default function DocumentEditModal({ document, trigger, onFileReplaced, open: controlledOpen, onOpenChange }) {
+    const [internalOpen, setInternalOpen] = useState(false);
+    const open = controlledOpen !== undefined ? controlledOpen : internalOpen;
+    const setOpen = onOpenChange || setInternalOpen;
+    
     const [name, setName] = useState(document.name);
+    const [formFields, setFormFields] = useState(document.form_fields || []);
     const [processing, setProcessing] = useState(false);
     const [selectedFiles, setSelectedFiles] = useState([]);
     const [uploadProgress, setUploadProgress] = useState(null);
@@ -34,10 +39,11 @@ export default function DocumentEditModal({ document, trigger, onFileReplaced })
     useEffect(() => {
         if (open) {
             setName(document.name);
+            setFormFields(document.form_fields || []);
             setSelectedFiles([]);
             setUploadProgress(null);
         }
-    }, [open, document.name]);
+    }, [open, document.name, document.form_fields]);
 
     const handleSubmit = async (event) => {
         event.preventDefault();
@@ -48,6 +54,36 @@ export default function DocumentEditModal({ document, trigger, onFileReplaced })
         }
 
         setProcessing(true);
+
+        const isForm = document.label === 'form';
+
+        // For forms, save form_fields
+        if (isForm) {
+            router.put(
+                `/tenant/documents/${document.id}`,
+                { 
+                    name: name.trim(),
+                    form_fields: formFields 
+                },
+                {
+                    onSuccess: () => {
+                        toast.success('Form updated.');
+                        setOpen(false);
+                    },
+                    onError: (errors) => {
+                        const message =
+                            errors.name ||
+                            errors.form_fields ||
+                            'Unable to update form. Please try again.';
+                        toast.error(message);
+                    },
+                    onFinish: () => {
+                        setProcessing(false);
+                    },
+                },
+            );
+            return;
+        }
 
         // If there's a new file selected, upload it as a replacement
         if (selectedFiles.length > 0) {
@@ -106,79 +142,87 @@ export default function DocumentEditModal({ document, trigger, onFileReplaced })
             <DialogTrigger asChild>
                 {trigger ?? <Button type="button">Edit</Button>}
             </DialogTrigger>
-            <DialogContent className="max-w-lg">
-                <DialogHeader>
+            <DialogContent className="flex h-[90vh] max-w-4xl flex-col gap-0 overflow-hidden p-0">
+                <DialogHeader className="shrink-0 border-b border-border px-6 py-4">
                     <DialogTitle>
                         {isForm ? 'Configure Form' : 'Edit Document'}
                     </DialogTitle>
                     <DialogDescription>
                         {isForm
-                            ? 'Configure the form name and settings.'
-                            : 'Update the document name.'}
+                            ? 'Configure the form fields that users will fill out.'
+                            : 'Update the document name and optionally replace the file.'}
                     </DialogDescription>
                 </DialogHeader>
-                <form className="space-y-4" onSubmit={handleSubmit}>
-                    <div className="grid gap-2">
-                        <Label htmlFor="document-name">
-                            {isForm ? 'Form name' : 'Document name'}
-                        </Label>
-                        <Input
-                            id="document-name"
-                            value={name}
-                            onChange={(event) => setName(event.target.value)}
-                            placeholder={
-                                isForm
-                                    ? 'e.g. Client intake form'
-                                    : 'e.g. Project proposal'
-                            }
-                            disabled={processing}
-                        />
+                <form className="flex min-h-0 flex-1 flex-col" onSubmit={handleSubmit}>
+                    <div className="custom-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-4">
+                        <div className="grid gap-2">
+                            <Label htmlFor="document-name">
+                                {isForm ? 'Form name' : 'Document name'}
+                            </Label>
+                            <Input
+                                id="document-name"
+                                value={name}
+                                onChange={(event) => setName(event.target.value)}
+                                placeholder={
+                                    isForm
+                                        ? 'e.g. Client intake form'
+                                        : 'e.g. Project proposal'
+                                }
+                                disabled={processing}
+                            />
+                        </div>
+
+                        {isForm ? (
+                            <>
+                                <div className="border-t border-border pt-4">
+                                    <FormMaker
+                                        fields={formFields}
+                                        onChange={setFormFields}
+                                    />
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                {hasFile && (
+                                    <div className="grid gap-2">
+                                        <Label>Replace file (optional)</Label>
+                                        <FileDropZone
+                                            onFilesSelected={setSelectedFiles}
+                                            accept=".pdf,.doc,.docx,.txt,.xlsx,.xls,.csv"
+                                            maxSize={10 * 1024 * 1024}
+                                            multiple={false}
+                                            className="w-full"
+                                        />
+                                        {selectedFiles.length > 0 && (
+                                            <p className="text-sm text-muted-foreground">
+                                                New file selected: {selectedFiles[0].name}
+                                            </p>
+                                        )}
+                                        <p className="text-xs text-muted-foreground">
+                                            Upload a new file to replace the existing one. The old file will be deleted.
+                                        </p>
+                                    </div>
+                                )}
+                            </>
+                        )}
+
+                        {uploadProgress !== null && (
+                            <div className="space-y-2">
+                                <div className="flex items-center justify-between text-sm">
+                                    <span className="text-muted-foreground">Uploading...</span>
+                                    <span className="font-medium">{uploadProgress}%</span>
+                                </div>
+                                <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                                    <div
+                                        className="h-full bg-primary transition-all"
+                                        style={{ width: `${uploadProgress}%` }}
+                                    />
+                                </div>
+                            </div>
+                        )}
                     </div>
 
-                    {hasFile && !isForm && (
-                        <div className="grid gap-2">
-                            <Label>Replace file (optional)</Label>
-                            <FileDropZone
-                                onFilesSelected={setSelectedFiles}
-                                accept=".pdf,.doc,.docx,.txt,.xlsx,.xls,.csv"
-                                maxSize={10 * 1024 * 1024}
-                                multiple={false}
-                                className="w-full"
-                            />
-                            {selectedFiles.length > 0 && (
-                                <p className="text-sm text-muted-foreground">
-                                    New file selected: {selectedFiles[0].name}
-                                </p>
-                            )}
-                            <p className="text-xs text-muted-foreground">
-                                Upload a new file to replace the existing one. The old file will be deleted.
-                            </p>
-                        </div>
-                    )}
-
-                    {isForm && !document.file_path && (
-                        <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-                            This form has no file attached. Forms can be filled
-                            out during the workflow process.
-                        </div>
-                    )}
-
-                    {uploadProgress !== null && (
-                        <div className="space-y-2">
-                            <div className="flex items-center justify-between text-sm">
-                                <span className="text-muted-foreground">Uploading...</span>
-                                <span className="font-medium">{uploadProgress}%</span>
-                            </div>
-                            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-                                <div
-                                    className="h-full bg-primary transition-all"
-                                    style={{ width: `${uploadProgress}%` }}
-                                />
-                            </div>
-                        </div>
-                    )}
-
-                    <DialogFooter>
+                    <DialogFooter className="shrink-0 border-t border-border bg-background px-6 py-4">
                         <DialogClose asChild>
                             <Button
                                 variant="secondary"
