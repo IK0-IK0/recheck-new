@@ -46,10 +46,10 @@ import {
 type DocumentRecord = {
     id: number;
     name: string;
-    file_path?: string;
+    file_path?: string | null;
     label: string;
-    file_type: string;
-    storage_driver?: string;
+    file_type?: string | null;
+    storage_driver?: string | null;
 };
 
 const fileExtension = (fileType: string, fileName?: string): string => {
@@ -409,7 +409,7 @@ export default function DocumentManagement({
                 normalizedQuery === '' ||
                 document.name.toLowerCase().includes(normalizedQuery) ||
                 document.label.toLowerCase().includes(normalizedQuery) ||
-                document.file_type.toLowerCase().includes(normalizedQuery);
+                (document.file_type || '').toLowerCase().includes(normalizedQuery);
             const matchesLabel =
                 labelFilter === 'all' || document.label === labelFilter;
 
