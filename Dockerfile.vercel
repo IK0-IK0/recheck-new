@@ -32,7 +32,17 @@ RUN composer install \
     --optimize-autoloader \
     --prefer-dist
 
-COPY . .
+# Copy application files in smaller batches to avoid buildah segfault
+COPY app ./app
+COPY bootstrap ./bootstrap
+COPY config ./config
+COPY database ./database
+COPY public ./public
+COPY resources ./resources
+COPY routes ./routes
+COPY artisan .
+COPY package.json package-lock.json postcss.config.js tailwind.config.js tsconfig.json vite.config.js ./
+COPY Caddyfile .
 
 RUN mkdir -p \
         storage/framework/cache/data \
