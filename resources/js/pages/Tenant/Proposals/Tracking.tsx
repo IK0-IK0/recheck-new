@@ -1,6 +1,7 @@
 import { router } from '@inertiajs/react';
 import {
     Activity,
+    Beaker,
     Eye,
     FileText,
     History,
@@ -10,7 +11,6 @@ import {
     Replace,
     Search,
     Upload,
-    Flask,
 } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -835,7 +835,7 @@ Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.`;
                         onClick={handleGenerateSampleFiles}
                         className="h-8 text-xs"
                     >
-                        <Flask className="mr-1.5 size-3.5" />
+                        <Beaker className="mr-1.5 size-3.5" />
                         Generate Sample Files
                     </Button>
                 </div>
@@ -880,7 +880,7 @@ Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.`;
                                 className="h-7 px-2 text-xs"
                                 title={showSampleFiles ? "Hide sample file" : "Show sample file"}
                             >
-                                <Flask className={`size-3.5 ${showSampleFiles ? 'text-primary' : ''}`} />
+                                <Beaker className={`size-3.5 ${showSampleFiles ? 'text-primary' : ''}`} />
                             </Button>
                         ) : null}
                     </div>
@@ -900,7 +900,7 @@ Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.`;
                     <div className="shrink-0 border-b border-border bg-accent/50 px-4 py-2">
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
-                                <Flask className="size-4 text-primary" />
+                                <Beaker className="size-4 text-primary" />
                                 <span className="text-sm font-medium">Sample file for {selectedPhaseName}</span>
                             </div>
                             <Button
