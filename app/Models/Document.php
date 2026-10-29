@@ -40,7 +40,20 @@ class Document extends Model
         'file_type',
         'label',
         'storage_driver',
+        'form_fields',
     ];
+
+    /**
+     * Get the attributes that should be cast.
+     *
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'form_fields' => 'array',
+        ];
+    }
 
     /**
      * The actions that require this document.
