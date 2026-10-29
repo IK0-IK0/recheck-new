@@ -10,6 +10,7 @@ import {
     Replace,
     Search,
     Upload,
+    Flask,
 } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -223,6 +224,63 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
     const commentButtonRefs = useRef<Record<number, HTMLButtonElement | null>>({});
     const reviewDocumentInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
     const [requestedPhaseOrder, setRequestedPhaseOrder] = useState<number | string | null>(null);
+    const [sampleFilesByPhase, setSampleFilesByPhase] = useState<Record<number, File>>({});
+    const [showSampleFiles, setShowSampleFiles] = useState(false);
+
+    // Generate sample file for a phase
+    const generateSampleFile = (phaseOrder: number, phaseName: string): File => {
+        const content = `Sample Test File for ${phaseName}
+        
+Phase Order: ${phaseOrder}
+Generated at: ${new Date().toLocaleString()}
+
+This is a temporary sample file generated for testing purposes.
+It contains sample content that simulates a document uploaded during the ${phaseName} phase.
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. 
+Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.`;
+
+        const blob = new Blob([content], { type: 'text/plain' });
+        return new File([blob], `sample-${phaseName.toLowerCase().replace(/\s+/g, '-')}-${phaseOrder}.txt`, {
+            type: 'text/plain',
+            lastModified: Date.now(),
+        });
+    };
+
+    const handleGenerateSampleFiles = () => {
+        const newSampleFiles: Record<number, File> = {};
+        
+        phases.forEach((phase) => {
+            if (typeof phase.id === 'number') {
+                newSampleFiles[phase.id] = generateSampleFile(phase.id, phase.name);
+            }
+        });
+
+        setSampleFilesByPhase(newSampleFiles);
+        setShowSampleFiles(true);
+        toast.success(`Generated ${Object.keys(newSampleFiles).length} sample files`);
+    };
+
+    const handleDownloadSampleFile = (phaseOrder: number) => {
+        const file = sampleFilesByPhase[phaseOrder];
+        if (!file) return;
+
+        const url = URL.createObjectURL(file);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = file.name;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        toast.success('Sample file downloaded');
+    };
+
+    const handleClearSampleFiles = () => {
+        setSampleFilesByPhase({});
+        setShowSampleFiles(false);
+        toast.success('Sample files cleared');
+    };
     const phases = useMemo(() => {
         const allPhaseOrders = new Set(
             proposals.flatMap((proposal) => proposal.process?.phases?.map((phase) => phase.order) ?? []),
@@ -760,6 +818,27 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                         <p className="text-xs text-muted-foreground">Review proposals by workflow phase.</p>
                     </div>
                 </div>
+                <div className="flex items-center gap-2">
+                    {Object.keys(sampleFilesByPhase).length > 0 ? (
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleClearSampleFiles}
+                            className="h-8 text-xs"
+                        >
+                            Clear Sample Files
+                        </Button>
+                    ) : null}
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleGenerateSampleFiles}
+                        className="h-8 text-xs"
+                    >
+                        <Flask className="mr-1.5 size-3.5" />
+                        Generate Sample Files
+                    </Button>
+                </div>
             </header>
 
             <div className="shrink-0 overflow-hidden rounded-lg border border-border bg-card">
@@ -784,13 +863,26 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
 
             <section className="flex flex-col rounded-lg border border-border bg-card md:min-h-0 md:flex-1 md:overflow-hidden">
                 <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border p-4">
-                    <div>
-                        <h2 className="text-sm font-semibold">{selectedPhaseName}</h2>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                            {isArchivedSelected
-                                ? `${phaseProposals.length} archived ${phaseProposals.length === 1 ? 'proposal' : 'proposals'}`
-                                : `${phaseProposals.length} ${phaseProposals.length === 1 ? 'proposal' : 'proposals'} in this phase`}
-                        </p>
+                    <div className="flex items-center gap-3">
+                        <div>
+                            <h2 className="text-sm font-semibold">{selectedPhaseName}</h2>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                                {isArchivedSelected
+                                    ? `${phaseProposals.length} archived ${phaseProposals.length === 1 ? 'proposal' : 'proposals'}`
+                                    : `${phaseProposals.length} ${phaseProposals.length === 1 ? 'proposal' : 'proposals'} in this phase`}
+                            </p>
+                        </div>
+                        {!isArchivedSelected && Object.keys(sampleFilesByPhase).length > 0 ? (
+                            <Button
+                                variant={showSampleFiles ? "secondary" : "outline"}
+                                size="sm"
+                                onClick={() => setShowSampleFiles(!showSampleFiles)}
+                                className="h-7 px-2 text-xs"
+                                title={showSampleFiles ? "Hide sample file" : "Show sample file"}
+                            >
+                                <Flask className={`size-3.5 ${showSampleFiles ? 'text-primary' : ''}`} />
+                            </Button>
+                        ) : null}
                     </div>
                     <div className="relative w-full">
                         <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -803,6 +895,25 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                         />
                     </div>
                 </div>
+                
+                {showSampleFiles && !isArchivedSelected && selectedPhaseOrder !== null && sampleFilesByPhase[selectedPhaseOrder] ? (
+                    <div className="shrink-0 border-b border-border bg-accent/50 px-4 py-2">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <Flask className="size-4 text-primary" />
+                                <span className="text-sm font-medium">Sample file for {selectedPhaseName}</span>
+                            </div>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDownloadSampleFile(selectedPhaseOrder as number)}
+                                className="h-7 px-2 text-xs"
+                            >
+                                Download
+                            </Button>
+                        </div>
+                    </div>
+                ) : null}
 
                 <div className="overflow-auto md:min-h-0 md:flex-1">
                     <table className="w-full min-w-[520px] border-collapse text-left text-sm">

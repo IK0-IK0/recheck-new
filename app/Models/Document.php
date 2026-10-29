@@ -11,8 +11,8 @@ use Illuminate\Support\Carbon;
 /**
  * @property int $id
  * @property string $name
- * @property string $file_path
- * @property string $file_type
+ * @property string|null $file_path
+ * @property string|null $file_type
  * @property string $label
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
@@ -60,5 +60,21 @@ class Document extends Model
     public function proposals(): BelongsToMany
     {
         return $this->belongsToMany(Proposal::class, 'proposal_documents', 'document_id', 'proposal_id');
+    }
+
+    /**
+     * Check if this document is a form.
+     */
+    public function isForm(): bool
+    {
+        return $this->label === 'form';
+    }
+
+    /**
+     * Check if this document has a file attached.
+     */
+    public function hasFile(): bool
+    {
+        return $this->file_path !== null;
     }
 }

@@ -9,6 +9,7 @@ import {
     FileText,
     FileSpreadsheet,
     FileType2,
+    Plus,
     Search,
     Trash2,
     X,
@@ -16,6 +17,7 @@ import {
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import DocumentUploadModal from '@/components/DocumentUploadModal';
+import DocumentEditModal from '@/components/DocumentEditModal';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -34,6 +36,12 @@ import {
     DialogHeader,
     DialogTitle,
 } from '@/components/ui/dialog';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 type DocumentRecord = {
     id: number;
@@ -54,16 +62,28 @@ const fileExtension = (fileType: string, fileName?: string): string => {
     return fileType.split('/').pop()?.toLowerCase() || 'file';
 };
 
-const fileTypeLabel = (fileType: string, fileName: string): string =>
-    fileExtension(fileType, fileName).toUpperCase();
+const fileTypeLabel = (fileType: string, fileName: string, label: string): string => {
+    if (label === 'form' && !fileName) {
+        return 'FORM';
+    }
+    return fileExtension(fileType, fileName).toUpperCase();
+};
 
 const FileKindIcon = ({
     fileType,
     fileName,
+    label,
 }: {
     fileType: string;
     fileName: string;
+    label: string;
 }) => {
+    if (label === 'form' && !fileName) {
+        return (
+            <FileText className="size-4 text-purple-600" aria-hidden="true" />
+        );
+    }
+
     const extension = fileExtension(fileType, fileName);
 
     if (['xls', 'xlsx', 'csv'].includes(extension)) {
@@ -402,8 +422,9 @@ export default function DocumentManagement({
                     : sortColumn === 'label'
                       ? firstDocument.label
                       : fileTypeLabel(
-                            firstDocument.file_type,
+                            firstDocument.file_type || '',
                             firstDocument.file_path || firstDocument.name,
+                            firstDocument.label,
                         );
             const secondValue =
                 sortColumn === 'name'
@@ -411,8 +432,9 @@ export default function DocumentManagement({
                     : sortColumn === 'label'
                       ? secondDocument.label
                       : fileTypeLabel(
-                            secondDocument.file_type,
+                            secondDocument.file_type || '',
                             secondDocument.file_path || secondDocument.name,
+                            secondDocument.label,
                         );
             const comparison = firstValue.localeCompare(
                 secondValue,
@@ -507,17 +529,51 @@ export default function DocumentManagement({
                             </p>
                         </div>
                     </div>
-                    <DocumentUploadModal
-                        title="Add document"
-                        submitLabel="Add"
-                        onSubmit={handleUpload}
-                        uploadProgress={uploadProgress}
-                        trigger={
+                    <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
                             <Button size="sm" className="h-8 text-xs">
+                                <Plus className="size-4 mr-1" />
                                 Add Document
                             </Button>
-                        }
-                    />
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                            <DocumentUploadModal
+                                title="Create form"
+                                description="Create a new form template that can be configured and filled out during workflows."
+                                submitLabel="Create form"
+                                initialValues={{ name: '', label: 'form' }}
+                                showType={false}
+                                showFileUpload={false}
+                                onSubmit={handleUpload}
+                                uploadProgress={uploadProgress}
+                                trigger={
+                                    <DropdownMenuItem
+                                        onSelect={(e) => e.preventDefault()}
+                                    >
+                                        <FileText className="size-4 mr-2" />
+                                        Create Form
+                                    </DropdownMenuItem>
+                                }
+                            />
+                            <DocumentUploadModal
+                                title="Upload document"
+                                description="Upload a document file to be used in workflows."
+                                submitLabel="Upload"
+                                initialValues={{ name: '', label: 'doc' }}
+                                showType={false}
+                                onSubmit={handleUpload}
+                                uploadProgress={uploadProgress}
+                                trigger={
+                                    <DropdownMenuItem
+                                        onSelect={(e) => e.preventDefault()}
+                                    >
+                                        <Download className="size-4 mr-2" />
+                                        Upload Document
+                                    </DropdownMenuItem>
+                                }
+                            />
+                        </DropdownMenuContent>
+                    </DropdownMenu>
                 </div>
 
                 <div className="flex min-h-0 flex-1 flex-col">
@@ -629,12 +685,13 @@ export default function DocumentManagement({
                                                     <div className="flex items-center justify-start gap-2">
                                                         <FileKindIcon
                                                             fileType={
-                                                                document.file_type
+                                                                document.file_type || ''
                                                             }
                                                             fileName={
                                                                 document.file_path ||
                                                                 document.name
                                                             }
+                                                            label={document.label}
                                                         />
                                                         <span>
                                                             {document.name}
@@ -646,57 +703,67 @@ export default function DocumentManagement({
                                                 </td>
                                                 <td className="border-l border-border/80 px-4 py-3 text-center text-sm text-muted-foreground">
                                                     {fileTypeLabel(
-                                                        document.file_type,
+                                                        document.file_type || '',
                                                         document.file_path ||
                                                             document.name,
+                                                        document.label,
                                                     )}
                                                 </td>
                                                 <td className="border-l border-border/80 px-4 py-3 text-center text-sm text-foreground">
                                                     <div className="flex flex-wrap justify-center gap-2">
-                                                        <Button
-                                                            variant="secondary"
-                                                            size="icon"
-                                                            className="size-7"
-                                                            type="button"
-                                                            aria-label={`View ${document.name}`}
-                                                            title="View document"
-                                                            onClick={(
-                                                                event,
-                                                            ) => {
-                                                                event.preventDefault();
-                                                                event.stopPropagation();
-                                                                void handleView(
-                                                                    document,
-                                                                );
-                                                            }}
-                                                        >
-                                                            <Eye className="size-3.5" />
-                                                        </Button>
-                                                        <Button
-                                                            variant="outline"
-                                                            size="icon"
-                                                            className="size-7"
-                                                            type="button"
-                                                            aria-label={`Edit ${document.name}`}
-                                                            title={`Edit ${document.label}`}
-                                                        >
-                                                            <Edit3 className="size-3.5" />
-                                                        </Button>
-                                                        <Button
-                                                            asChild
-                                                            variant="outline"
-                                                            size="icon"
-                                                            className="size-7"
-                                                            aria-label="Download document"
-                                                        >
-                                                            <a
-                                                                href={`/tenant/documents/${document.id}/download`}
-                                                                title="Download document"
+                                                        {document.file_path && (
+                                                            <Button
+                                                                variant="secondary"
+                                                                size="icon"
+                                                                className="size-7"
+                                                                type="button"
+                                                                aria-label={`View ${document.name}`}
+                                                                title="View document"
+                                                                onClick={(
+                                                                    event,
+                                                                ) => {
+                                                                    event.preventDefault();
+                                                                    event.stopPropagation();
+                                                                    void handleView(
+                                                                        document,
+                                                                    );
+                                                                }}
+                                                            >
+                                                                <Eye className="size-3.5" />
+                                                            </Button>
+                                                        )}
+                                                        <DocumentEditModal
+                                                            document={document}
+                                                            trigger={
+                                                                <Button
+                                                                    variant="outline"
+                                                                    size="icon"
+                                                                    className="size-7"
+                                                                    type="button"
+                                                                    aria-label={`Edit ${document.name}`}
+                                                                    title={`Edit ${document.label}`}
+                                                                >
+                                                                    <Edit3 className="size-3.5" />
+                                                                </Button>
+                                                            }
+                                                        />
+                                                        {document.file_path && (
+                                                            <Button
+                                                                asChild
+                                                                variant="outline"
+                                                                size="icon"
+                                                                className="size-7"
                                                                 aria-label="Download document"
                                                             >
-                                                                <Download className="size-3.5" />
-                                                            </a>
-                                                        </Button>
+                                                                <a
+                                                                    href={`/tenant/documents/${document.id}/download`}
+                                                                    title="Download document"
+                                                                    aria-label="Download document"
+                                                                >
+                                                                    <Download className="size-3.5" />
+                                                                </a>
+                                                            </Button>
+                                                        )}
                                                         <Button
                                                             variant="destructive"
                                                             size="icon"

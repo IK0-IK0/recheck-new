@@ -64,8 +64,27 @@ class DocumentManagementController extends Controller
         ]);
 
         $uploadedFile = $request->file('file');
-        $fileType = $validated['label'] === 'form' ? 'Form' : 'Document';
         $storageDriver = 'unknown';
+
+        // Forms without files are allowed
+        if ($validated['label'] === 'form' && ! $uploadedFile) {
+            Document::create([
+                'name' => $validated['name'],
+                'file_path' => null,
+                'file_type' => null,
+                'label' => 'form',
+                'storage_driver' => null,
+            ]);
+
+            return redirect()->back();
+        }
+
+        // Documents require a file
+        if ($validated['label'] === 'doc' && ! $uploadedFile) {
+            return redirect()->back()->withErrors([
+                'file' => 'Documents require a file upload.',
+            ]);
+        }
 
         try {
             $storageDriver = $this->getStorageDisk();
@@ -88,22 +107,9 @@ class DocumentManagementController extends Controller
                 return redirect()->back();
             }
 
-            $filePath = 'documents/'.Str::slug($validated['name']).'.txt';
-            $stored = Storage::disk($storageDriver)->put($filePath, '');
-
-            if (! $stored) {
-                throw new \RuntimeException('The storage disk did not accept the document.');
-            }
-
-            Document::create([
-                'name' => $validated['name'],
-                'file_path' => $filePath,
-                'file_type' => $fileType,
-                'label' => $validated['label'],
-                'storage_driver' => $storageDriver,
+            return redirect()->back()->withErrors([
+                'file' => 'File upload is required.',
             ]);
-
-            return redirect()->back();
         } catch (Throwable $exception) {
             report($exception);
 
@@ -364,10 +370,28 @@ class DocumentManagementController extends Controller
     public function destroy(Document $document): RedirectResponse
     {
         // Use the storage driver that was used to upload the file
-        $disk = Storage::disk($document->storage_driver ?? 'local');
-        $disk->delete($document->file_path);
+        if ($document->file_path && $document->storage_driver) {
+            $disk = Storage::disk($document->storage_driver);
+            $disk->delete($document->file_path);
+        }
 
         $document->delete();
+
+        return redirect()->back();
+    }
+
+    /**
+     * Update a document record.
+     */
+    public function update(Request $request, Document $document): RedirectResponse
+    {
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+        ]);
+
+        $document->update([
+            'name' => $validated['name'],
+        ]);
 
         return redirect()->back();
     }

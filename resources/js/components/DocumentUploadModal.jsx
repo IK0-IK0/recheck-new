@@ -31,6 +31,7 @@ import FileDropZone from '@/components/FileDropZone';
  *   initialValues?: { name: string, label: string },
  *   showName?: boolean,
  *   showType?: boolean,
+ *   showFileUpload?: boolean,
  *   expectedType?: string | null,
  *   onSubmit?: (values: { name: string, label: string, files: File[] }) => boolean | void | Promise<boolean | void>,
  *   uploadProgress?: number | null,
@@ -44,6 +45,7 @@ export default function DocumentUploadModal({
     initialValues = { name: '', label: 'form' },
     showName = true,
     showType = true,
+    showFileUpload = true,
     expectedType = null,
     onSubmit,
     uploadProgress = null,
@@ -76,7 +78,10 @@ export default function DocumentUploadModal({
             return;
         }
 
-        if (selectedFiles.length === 0) {
+        // Only require files if showFileUpload is true OR if the label is 'doc'
+        const requireFile = showFileUpload && (values.label === 'doc' || selectedFiles.length === 0);
+        
+        if (requireFile && selectedFiles.length === 0) {
             setErrors({
                 name: '',
                 label: '',
@@ -181,23 +186,25 @@ export default function DocumentUploadModal({
                     ) : null}
 
                     {/* File Drop Zone */}
-                    <div className="grid w-full gap-2 overflow-hidden">
-                        {selectedFiles.length === 0 && (
-                            <Label>Upload file</Label>
-                        )}
-                        <FileDropZone
-                            onFilesSelected={setSelectedFiles}
-                            accept=".pdf,.doc,.docx,.txt,.xlsx,.xls,.csv"
-                            maxSize={10 * 1024 * 1024}
-                            multiple={false}
-                            className="w-full"
-                        />
-                        {errors.file ? (
-                            <p className="text-sm text-destructive">
-                                {errors.file}
-                            </p>
-                        ) : null}
-                    </div>
+                    {showFileUpload && (
+                        <div className="grid w-full gap-2 overflow-hidden">
+                            {selectedFiles.length === 0 && (
+                                <Label>Upload file {values.label === 'form' ? '(optional)' : ''}</Label>
+                            )}
+                            <FileDropZone
+                                onFilesSelected={setSelectedFiles}
+                                accept=".pdf,.doc,.docx,.txt,.xlsx,.xls,.csv"
+                                maxSize={10 * 1024 * 1024}
+                                multiple={false}
+                                className="w-full"
+                            />
+                            {errors.file ? (
+                                <p className="text-sm text-destructive">
+                                    {errors.file}
+                                </p>
+                            ) : null}
+                        </div>
+                    )}
 
                     <DialogFooter>
                         {processing && uploadProgress !== null ? (
