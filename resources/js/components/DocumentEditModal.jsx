@@ -16,7 +16,7 @@ import {
     DialogTrigger,
 } from '@/components/ui/dialog';
 import FileDropZone from '@/components/FileDropZone';
-import FormMaker from '@/components/FormMaker';
+import FormMaker from '@/components/FormBuilder/FormMaker';
 
 /**
  * @param {{
@@ -173,14 +173,22 @@ export default function DocumentEditModal({ document, trigger, onFileReplaced, o
                         </div>
 
                         {isForm ? (
-                            <>
-                                <div className="border-t border-border pt-4">
-                                    <FormMaker
-                                        fields={formFields}
-                                        onChange={setFormFields}
-                                    />
+                            <div className="space-y-4 border-t border-border pt-4">
+                                <div>
+                                    <h3 className="text-sm font-semibold">
+                                        Form Builder
+                                    </h3>
+                                    <p className="text-xs text-muted-foreground">
+                                        Add, edit, and reorder the fields users
+                                        will fill out.
+                                    </p>
                                 </div>
-                            </>
+                                <FormMaker
+                                    fields={formFields}
+                                    onChange={setFormFields}
+                                    disabled={processing}
+                                />
+                            </div>
                         ) : (
                             <>
                                 {hasFile && (
