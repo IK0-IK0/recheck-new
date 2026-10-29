@@ -77,8 +77,8 @@ export default function DocumentEditModal({ document, trigger }: Props) {
     return (
         <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>{trigger}</DialogTrigger>
-            <DialogContent className="flex h-[90vh] max-w-4xl flex-col gap-0 p-0">
-                <DialogHeader className="shrink-0 space-y-2 border-b border-border p-6 pb-4">
+            <DialogContent className="flex h-[90vh] max-w-4xl flex-col p-0">
+                <DialogHeader className="shrink-0 border-b border-border px-6 py-4">
                     <DialogTitle>Edit {document.label === 'form' ? 'Form' : 'Document'}</DialogTitle>
                     <DialogDescription>
                         {document.label === 'form'
@@ -87,30 +87,38 @@ export default function DocumentEditModal({ document, trigger }: Props) {
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="min-h-0 flex-1 space-y-6 overflow-y-auto p-6">
-                    <div className="space-y-2">
-                        <Label htmlFor="document-name">Name *</Label>
-                        <Input
-                            id="document-name"
-                            value={name}
-                            onChange={(event) => setName(event.target.value)}
-                            placeholder="Enter document name"
-                            disabled={isSaving}
-                        />
-                    </div>
-
-                    {document.label === 'form' ? (
-                        <div className="rounded-lg border border-border bg-muted/30 p-4">
-                            <FormMaker
-                                fields={formFields}
-                                onChange={setFormFields}
+                <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+                    <div className="space-y-6">
+                        <div className="space-y-2">
+                            <Label htmlFor="document-name">Name *</Label>
+                            <Input
+                                id="document-name"
+                                value={name}
+                                onChange={(event) => setName(event.target.value)}
+                                placeholder="Enter document name"
                                 disabled={isSaving}
                             />
                         </div>
-                    ) : null}
+
+                        {document.label === 'form' ? (
+                            <div className="space-y-4 border-t border-border pt-6">
+                                <div>
+                                    <h3 className="text-sm font-semibold">Form Builder</h3>
+                                    <p className="text-xs text-muted-foreground">
+                                        Design your form by adding and configuring fields
+                                    </p>
+                                </div>
+                                <FormMaker
+                                    fields={formFields}
+                                    onChange={setFormFields}
+                                    disabled={isSaving}
+                                />
+                            </div>
+                        ) : null}
+                    </div>
                 </div>
 
-                <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border p-6 pt-4">
+                <div className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-6 py-4">
                     <Button
                         type="button"
                         variant="outline"
