@@ -41,7 +41,9 @@ class DocumentManagementController extends Controller
      */
     public function index(): Response
     {
-        $documents = Document::all();
+        $documents = Document::query()
+            ->whereDoesntHave('proposals')
+            ->get();
         $currentStorageDriver = $this->getStorageDisk();
 
         return Inertia::render('Tenant/DocumentManagement', [

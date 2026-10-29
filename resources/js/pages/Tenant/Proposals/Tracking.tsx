@@ -1602,15 +1602,15 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
                                 ) : null}
 
                                 {selectedProposal.is_main_reviewer
-                                && selectedProposal.current_action?.action_type === 'review' ? (
+                                && selectedProposal.current_action?.action_type === 'review'
+                                && requiresAdditionalReviewers
+                                && hasUnsavedReviewerChanges ? (
                                     <footer className="mt-auto flex shrink-0 justify-end border-t border-border bg-background pt-4">
                                         <Button
                                             type="button"
                                             disabled={
-                                                !requiresAdditionalReviewers
-                                                || isSubmittingDecision
+                                                isSubmittingDecision
                                                 || hasReviewerResponded
-                                                || !hasUnsavedReviewerChanges
                                                 || reviewerGroups.some((group) => !selectedReviewerSelections[reviewerSelectionKey(group.id)])
                                             }
                                             onClick={handleSaveReviewers}
