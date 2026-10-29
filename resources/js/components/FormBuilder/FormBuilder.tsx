@@ -1,25 +1,34 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import FormFieldRenderer from './FormFieldRenderer';
 import type { FormField, FormFieldValue } from './FormFieldTypes';
 
 type Props = {
     fields: FormField[];
-    onSubmit: (values: Record<string, FormFieldValue>) => void;
+    initialValues?: Record<string, FormFieldValue>;
+    onSubmit: (values: Record<string, FormFieldValue>) => void | Promise<void>;
     submitLabel?: string;
     disabled?: boolean;
 };
 
 type FormErrors = Record<string, string>;
+const EMPTY_FORM_VALUES: Record<string, FormFieldValue> = {};
 
 export default function FormBuilder({
     fields,
+    initialValues = EMPTY_FORM_VALUES,
     onSubmit,
     submitLabel = 'Submit',
     disabled = false,
 }: Props) {
-    const [values, setValues] = useState<Record<string, FormFieldValue>>({});
+    const [values, setValues] =
+        useState<Record<string, FormFieldValue>>(initialValues);
     const [errors, setErrors] = useState<FormErrors>({});
+
+    useEffect(() => {
+        setValues(initialValues);
+        setErrors({});
+    }, [initialValues]);
 
     const handleFieldChange = (fieldId: string, value: FormFieldValue) => {
         setValues((currentValues) => ({

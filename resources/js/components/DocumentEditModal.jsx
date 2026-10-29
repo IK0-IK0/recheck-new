@@ -175,10 +175,10 @@ export default function DocumentEditModal({ document, trigger, onFileReplaced, o
                         {isForm ? (
                             <div className="space-y-4 border-t border-border pt-4">
                                 <div>
-                                    <h3 className="text-sm font-semibold">
+                                    <h3 className="text-base font-semibold tracking-tight">
                                         Form Builder
                                     </h3>
-                                    <p className="text-xs text-muted-foreground">
+                                    <p className="mt-0.5 text-sm text-muted-foreground">
                                         Add, edit, and reorder the fields users
                                         will fill out.
                                     </p>

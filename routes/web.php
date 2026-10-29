@@ -56,6 +56,7 @@ Route::middleware(['auth', 'verified'])->group(function (): void {
             Route::post('/proposals/{proposal}/documents/direct-upload-url', 'directUploadUrl')->name('tenant.proposals.documents.direct-upload-url');
             Route::post('/proposals/{proposal}/documents/complete-direct-upload', 'completeDirectUpload')->name('tenant.proposals.documents.complete-direct-upload');
             Route::delete('/proposals/{proposal}/documents/{document}', 'destroyDocument')->name('tenant.proposals.documents.destroy');
+            Route::post('/proposals/{proposal}/forms/{document}/responses', 'storeFormResponse')->name('tenant.proposals.forms.responses.store');
             Route::post('/proposals/{proposal}/submit', 'submit')->name('tenant.proposals.submit');
             Route::post('/proposals/{proposal}/review', 'review')->name('tenant.proposals.review');
             Route::put('/proposals/{proposal}/reviewers', 'assignReviewers')->name('tenant.proposals.reviewers.assign');

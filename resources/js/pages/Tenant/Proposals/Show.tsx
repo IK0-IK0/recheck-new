@@ -3,6 +3,8 @@ import { FileText, Download, Trash2, CheckCircle2, Circle, Eye, Loader2 } from '
 import { useState } from 'react';
 import { toast } from 'sonner';
 import DocumentUploadModal from '@/components/DocumentUploadModal';
+import ProposalFormDialog from '@/components/FormBuilder/ProposalFormDialog';
+import type { FormField, FormFieldValue } from '@/components/FormBuilder/FormFieldTypes';
 import { Button } from '@/components/ui/button';
 
 type Phase = {
@@ -23,6 +25,7 @@ type Proposal = {
     title: string;
     process_id: number | null;
     current_phase_id: number | null;
+    current_phase: Phase | null;
     current_action: {
         id: number;
         name: string;
@@ -33,13 +36,30 @@ type Proposal = {
     documents: DocumentRecord[];
 };
 
+type ReviewDocument = {
+    id: number;
+    name: string;
+    file_type: string;
+    label: 'form' | 'doc';
+    form_fields?: FormField[] | null;
+    form_response?: Record<string, FormFieldValue> | null;
+};
+
 type Props = {
     proposal: Proposal;
     phases: Phase[];
     canReview: boolean;
+    reviewDocuments: ReviewDocument[];
+    currentStorageDriver: string;
 };
 
-export default function Show({ proposal, phases, canReview }: Props) {
+export default function Show({
+    proposal,
+    phases,
+    canReview,
+    reviewDocuments,
+    currentStorageDriver,
+}: Props) {
     const uploadProgress = null;
     const [isSubmittingReview, setIsSubmittingReview] = useState(false);
 
@@ -153,6 +173,42 @@ return;
                             {proposal.current_action.description ? (
                                 <p className="mt-2 text-sm text-muted-foreground">{proposal.current_action.description}</p>
                             ) : null}
+                        </div>
+                    ) : null}
+
+                    {reviewDocuments.some((document) => document.label === 'form') ? (
+                        <div className="rounded-lg border border-border bg-card p-5">
+                            <h2 className="font-semibold">Assigned forms</h2>
+                            <p className="mt-1 text-sm text-muted-foreground">
+                                Complete your assigned forms. Responses are saved separately for each reviewer.
+                            </p>
+                            <div className="mt-4 space-y-3">
+                                {reviewDocuments
+                                    .filter((document) => document.label === 'form')
+                                    .map((form) => (
+                                        <div
+                                            key={form.id}
+                                            className="flex items-center justify-between gap-3 rounded-md border border-border p-3"
+                                        >
+                                            <div className="min-w-0">
+                                                <p className="truncate text-sm font-medium">{form.name}</p>
+                                                <p className="text-xs text-muted-foreground">
+                                                    {form.form_response ? 'Response saved' : 'Not completed'}
+                                                </p>
+                                            </div>
+                                            {proposal.current_phase && proposal.current_action ? (
+                                                <ProposalFormDialog
+                                                    proposalId={proposal.id}
+                                                    phaseId={proposal.current_phase.id}
+                                                    actionId={proposal.current_action.id}
+                                                    document={form}
+                                                    currentStorageDriver={currentStorageDriver}
+                                                    canFill={canReview}
+                                                />
+                                            ) : null}
+                                        </div>
+                                    ))}
+                            </div>
                         </div>
                     ) : null}
 

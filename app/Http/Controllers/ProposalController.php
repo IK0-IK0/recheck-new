@@ -8,6 +8,7 @@ use App\Models\Phase;
 use App\Models\Process;
 use App\Models\Proposal;
 use App\Models\ProposalActionReviewer;
+use App\Models\ProposalFormResponse;
 use App\Models\ProposalActionTransition;
 use App\Models\StorageConfig;
 use App\Models\SuperadminTenantUser;
@@ -92,10 +93,39 @@ class ProposalController extends Controller
             'phaseTransitions.phase',
             'actionTransitions.action',
             'documents',
+            'formResponses',
         ]);
         $proposals = $proposalsQuery->latest()->get();
         $proposals->each(function (Proposal $proposal) use ($request, $reviewAssignments): void {
             $currentAction = $proposal->currentAction;
+            $identity = [
+                'user_id' => (int) $request->user()->getKey(),
+                'user_type' => $request->user()::class,
+            ];
+            $proposal->process?->phases
+                ->flatMap(fn (Phase $phase) => $phase->actions ?? collect())
+                ->each(function (Action $action) use ($proposal, $identity): void {
+                    $currentRound = (int) $proposal->current_action_id === (int) $action->id
+                        ? $this->formResponseRound($proposal, $action)
+                        : null;
+                    $action->documents?->each(function (Document $document) use (
+                        $proposal,
+                        $identity,
+                        $action,
+                        $currentRound,
+                    ): void {
+                        $responses = $proposal->formResponses
+                            ->where('document_id', $document->id)
+                            ->where('action_id', $action->id)
+                            ->where('user_id', $identity['user_id'])
+                            ->where('user_type', $identity['user_type']);
+                        $response = $currentRound === null
+                            ? $responses->sortByDesc('round')->first()
+                            : $responses->firstWhere('round', $currentRound);
+
+                        $document->setAttribute('form_response', $response?->answers);
+                    });
+                });
             $reviewerGroupSet = $currentAction?->action_type === 'review'
                 ? $this->effectiveReviewerGroupSet($proposal, $currentAction)
                 : ['key' => 'all', 'reviewer_groups' => []];
@@ -237,8 +267,24 @@ class ProposalController extends Controller
                     : Document::query()
                         ->whereIn('id', $reviewDocumentIds)
                         ->orderBy('name')
-                        ->get(['id', 'name', 'file_type', 'label']),
+                        ->get(['id', 'name', 'file_type', 'label', 'form_fields'])
+                        ->each(function (Document $document) use ($proposal, $currentAction, $identity): void {
+                            if ($currentAction === null) {
+                                return;
+                            }
+
+                            $response = $proposal->formResponses
+                                ->where('document_id', $document->id)
+                                ->where('action_id', $currentAction->id)
+                                ->where('round', $this->formResponseRound($proposal, $currentAction))
+                                ->where('user_id', $identity['user_id'])
+                                ->where('user_type', $identity['user_type'])
+                                ->first();
+
+                            $document->setAttribute('form_response', $response?->answers);
+                        }),
             );
+            $proposal->unsetRelation('formResponses');
         });
         $requestedProposalId = filter_var($request->query('proposal'), FILTER_VALIDATE_INT);
 
@@ -397,6 +443,7 @@ class ProposalController extends Controller
             'currentAction.roles',
             'currentAction.documents',
             'documents',
+            'formResponses',
         ]);
 
         abort_unless(
@@ -405,10 +452,33 @@ class ProposalController extends Controller
             403,
         );
 
+        $identity = [
+            'user_id' => (int) $request->user()->getKey(),
+            'user_type' => $request->user()::class,
+        ];
+        $reviewDocumentIds = $this->reviewerAssignedDocumentIds($request, $proposal, $proposal->currentAction);
+        $reviewDocuments = $proposal->currentAction->documents
+            ->whereIn('id', $reviewDocumentIds)
+            ->values()
+            ->each(function (Document $document) use ($proposal, $identity): void {
+                $response = $proposal->formResponses
+                    ->where('document_id', $document->id)
+                    ->where('action_id', $proposal->currentAction->id)
+                    ->where('round', $this->formResponseRound($proposal, $proposal->currentAction))
+                    ->where('user_id', $identity['user_id'])
+                    ->where('user_type', $identity['user_type'])
+                    ->first();
+
+                $document->setAttribute('form_response', $response?->answers);
+            });
+        $proposal->unsetRelation('formResponses');
+
         return Inertia::render('Tenant/Proposals/Show', [
             'proposal' => $proposal,
             'phases' => $proposal->process?->phases ?? collect(),
             'canReview' => true,
+            'reviewDocuments' => $reviewDocuments,
+            'currentStorageDriver' => StorageConfig::activeForCurrentUser()?->driver ?? 'local',
         ]);
     }
 
@@ -425,6 +495,7 @@ class ProposalController extends Controller
             'required_document_id' => ['nullable', 'integer'],
             'action_id' => ['nullable', 'integer'],
             'replace_document_id' => ['nullable', 'integer'],
+            'form_field_id' => ['nullable', 'string', 'max:255'],
         ]);
 
         $this->authorizeProposalDocumentUpload(
@@ -441,6 +512,7 @@ class ProposalController extends Controller
         $requiredDocumentId = $validated['required_document_id'] ?? null;
         $actionId = $validated['action_id'] ?? null;
         $replaceDocumentId = $validated['replace_document_id'] ?? null;
+        $formFieldId = $validated['form_field_id'] ?? null;
         $phase = null;
 
         if (($phaseId === null) !== ($requiredDocumentId === null)) {
@@ -499,7 +571,26 @@ class ProposalController extends Controller
             $name = $requiredDocument->name;
             $label = $requiredDocument->label;
 
+            if ($formFieldId !== null) {
+                if ($phaseId === null || $actionId === null || $requiredDocument->label !== 'form') {
+                    return redirect()->back()->withErrors([
+                        'form_field_id' => 'A form field upload must belong to a current workflow form.',
+                    ]);
+                }
+
+                $this->validateFormFileField(
+                    $requiredDocument,
+                    $formFieldId,
+                    $uploadedFile->getClientOriginalName(),
+                    $uploadedFile->getClientOriginalExtension(),
+                    $uploadedFile->getSize(),
+                );
+                $name = Str::limit(basename($uploadedFile->getClientOriginalName()), 255, '');
+                $label = 'doc';
+            }
+
             if (str_contains($requiredDocument->file_type, '/')
+                && $formFieldId === null
                 && strtolower($requiredDocument->file_type) !== strtolower($uploadedFile->getMimeType() ?? '')) {
                 return redirect()->back()->withErrors([
                     'file' => "Upload a {$requiredDocument->file_type} file to match the required document.",
@@ -532,6 +623,7 @@ class ProposalController extends Controller
             : null;
 
         $storageDriver = 'unknown';
+        $createdDocument = null;
 
         try {
             $storage = $this->getStorageDisk();
@@ -555,17 +647,35 @@ class ProposalController extends Controller
                     $document = Document::create([
                         'name' => $name,
                         'file_path' => $filePath,
-                        'file_type' => $uploadedFile->getMimeType(),
+                        'file_type' => $uploadedFile->getMimeType() ?? 'application/octet-stream',
                         'label' => $label,
                         'storage_driver' => $storageDriver,
                     ]);
+                    $createdDocument = $document;
 
                     $pivotData = $phase ? [
                         'phase_id' => $phase->id,
                         'required_document_id' => $requiredDocumentId,
                         'action_id' => $actionId,
                     ] : [];
+                    if ($formFieldId !== null) {
+                        $pivotData = [
+                            ...$pivotData,
+                            'form_field_id' => $formFieldId,
+                            'form_uploader_id' => $request->user()->getKey(),
+                            'form_uploader_type' => $request->user()::class,
+                        ];
+                    }
                     $proposal->documents()->attach($document->id, $pivotData);
+                }
+
+                if ($request->expectsJson() && $createdDocument !== null) {
+                    return response()->json([
+                        'document' => [
+                            'id' => $createdDocument->id,
+                            'name' => $createdDocument->name,
+                        ],
+                    ]);
                 }
 
                 return redirect()->back();
@@ -591,6 +701,282 @@ class ProposalController extends Controller
         }
     }
 
+    public function storeFormResponse(Request $request, Proposal $proposal, Document $document): RedirectResponse
+    {
+        $validated = $request->validate([
+            'action_id' => ['required', 'integer'],
+            'answers' => ['required', 'array'],
+        ]);
+        $action = Action::query()->with('documents')->findOrFail($validated['action_id']);
+        $context = $this->authorizeProposalForm($request, $proposal, $action, $document);
+        $answers = $this->validateProposalFormAnswers(
+            $proposal,
+            $document,
+            $action,
+            $request->user()->getKey(),
+            $request->user()::class,
+            $validated['answers'],
+        );
+
+        ProposalFormResponse::query()->updateOrCreate(
+            [
+                'proposal_id' => $proposal->id,
+                'document_id' => $document->id,
+                'action_id' => $action->id,
+                'round' => $context['round'],
+                'user_id' => $request->user()->getKey(),
+                'user_type' => $request->user()::class,
+            ],
+            ['answers' => $answers],
+        );
+
+        return redirect()->back()->with('success', 'Form response saved.');
+    }
+
+    /**
+     * @return array{round: int}
+     */
+    private function authorizeProposalForm(
+        Request $request,
+        Proposal $proposal,
+        Action $action,
+        Document $document,
+    ): array {
+        $this->authorizeProposalInstitution($request, $proposal);
+
+        abort_unless(
+            $document->label === 'form'
+                && $action->documents->contains('id', $document->id)
+                && (int) $proposal->current_action_id === (int) $action->id,
+            403,
+        );
+
+        $isOwner = (int) $request->user()->getKey() === (int) $proposal->user_id
+            && $request->user()::class === $proposal->user_type;
+
+        if ($action->action_type === 'submit') {
+            abort_unless($isOwner, 403);
+        } else {
+            abort_unless(
+                $action->action_type === 'review'
+                    && $this->userCanAccessReviewProposal($request, $proposal, $action)
+                    && in_array(
+                        (int) $document->id,
+                        $this->reviewerAssignedDocumentIds($request, $proposal, $action),
+                        true,
+                    ),
+                403,
+            );
+        }
+
+        return ['round' => $this->formResponseRound($proposal, $action)];
+    }
+
+    /**
+     * @param  array<string, mixed>  $answers
+     * @return array<string, mixed>
+     */
+    private function validateProposalFormAnswers(
+        Proposal $proposal,
+        Document $document,
+        Action $action,
+        int|string $userId,
+        string $userType,
+        array $answers,
+    ): array {
+        $fields = collect($document->form_fields ?? [])->keyBy('id');
+        $unknownFieldIds = array_diff(array_keys($answers), $fields->keys()->all());
+
+        if ($unknownFieldIds !== []) {
+            throw ValidationException::withMessages([
+                'answers' => 'The submitted form contains an unknown field.',
+            ]);
+        }
+
+        $validatedAnswers = [];
+
+        foreach ($fields as $fieldId => $field) {
+            $value = $answers[$fieldId] ?? null;
+
+            if (($field['validation']['required'] ?? false) && (
+                $value === null || $value === '' || $value === []
+            )) {
+                throw ValidationException::withMessages([
+                    'answers.'.$fieldId => 'This field is required.',
+                ]);
+            }
+
+            if ($value === null || $value === '') {
+                $validatedAnswers[$fieldId] = null;
+
+                continue;
+            }
+
+            $options = collect($field['options'] ?? [])->pluck('value')->all();
+            $uploadedFormFile = null;
+
+            if (($field['type'] ?? null) === 'file_upload' && is_array($value)
+                && isset($value['document_id']) && is_numeric($value['document_id'])) {
+                $uploadedFormFile = $proposal->documents()
+                    ->whereKey((int) $value['document_id'])
+                    ->wherePivot('required_document_id', $document->id)
+                    ->wherePivot('action_id', $action->id)
+                    ->wherePivot('form_field_id', (string) $fieldId)
+                    ->wherePivot('form_uploader_id', $userId)
+                    ->wherePivot('form_uploader_type', $userType)
+                    ->first();
+
+                if ($uploadedFormFile !== null) {
+                    $value = [
+                        'document_id' => $uploadedFormFile->id,
+                        'name' => $uploadedFormFile->name,
+                    ];
+                }
+            }
+
+            $isValid = match ($field['type'] ?? null) {
+                'short_text', 'long_text' => is_string($value),
+                'multiple_choice', 'dropdown' => is_string($value) && in_array($value, $options, true),
+                'checkboxes' => is_array($value)
+                    && collect($value)->every(fn ($option): bool => is_string($option))
+                    && count($value) === count(array_unique($value))
+                    && collect($value)->every(fn ($option): bool => is_string($option) && in_array($option, $options, true)),
+                'linear_scale' => is_numeric($value)
+                    && (float) $value === (float) (int) $value
+                    && (int) $value >= (int) ($field['scaleMin'] ?? 1)
+                    && (int) $value <= (int) ($field['scaleMax'] ?? 5),
+                'date' => is_string($value)
+                    && ($date = \DateTimeImmutable::createFromFormat('!Y-m-d', $value)) !== false
+                    && $date->format('Y-m-d') === $value,
+                'time' => is_string($value)
+                    && preg_match('/\A(?:[01]\d|2[0-3]):[0-5]\d\z/', $value) === 1,
+                'signature' => is_string($value)
+                    && strlen($value) <= 1_000_000
+                    && preg_match('/\Adata:image\/png;base64,[A-Za-z0-9+\/=]+\z/', $value) === 1
+                    && str_starts_with(
+                        base64_decode(substr($value, strlen('data:image/png;base64,')), true) ?: '',
+                        "\x89PNG\r\n\x1a\n",
+                    ),
+                'file_upload' => is_array($value) && $uploadedFormFile !== null,
+                default => false,
+            };
+
+            if (! $isValid) {
+                throw ValidationException::withMessages([
+                    'answers.'.$fieldId => 'The submitted answer is invalid.',
+                ]);
+            }
+
+            if (is_string($value) && isset($field['validation']['maxLength'])
+                && mb_strlen($value) > (int) $field['validation']['maxLength']) {
+                throw ValidationException::withMessages([
+                    'answers.'.$fieldId => 'This answer is too long.',
+                ]);
+            }
+
+            if (is_string($value) && isset($field['validation']['minLength'])
+                && mb_strlen($value) < (int) $field['validation']['minLength']) {
+                throw ValidationException::withMessages([
+                    'answers.'.$fieldId => 'This answer is too short.',
+                ]);
+            }
+
+            $validatedAnswers[$fieldId] = $value;
+        }
+
+        return $validatedAnswers;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function validateFormFileField(
+        Document $form,
+        string $fieldId,
+        string $originalFileName,
+        string $fileExtension,
+        int $fileSize,
+    ): array {
+        abort_unless($form->label === 'form', 422, 'The selected document is not a form.');
+
+        $field = collect($form->form_fields ?? [])
+            ->first(fn (array $candidate): bool => (string) ($candidate['id'] ?? '') === $fieldId);
+
+        abort_unless(
+            $field !== null && ($field['type'] ?? null) === 'file_upload',
+            422,
+            'The selected form field does not accept file uploads.',
+        );
+
+        $validation = $field['validation'] ?? [];
+        $maxFileSize = min((int) ($validation['maxFileSize'] ?? 10 * 1024 * 1024), 10 * 1024 * 1024);
+        $acceptedExtensions = collect($validation['fileTypes'] ?? [])
+            ->map(fn (string $type): string => strtolower(ltrim(trim($type), '*.')))
+            ->filter()
+            ->all();
+
+        if ($fileSize < 1 || $fileSize > $maxFileSize) {
+            throw ValidationException::withMessages([
+                'file' => 'The selected file exceeds the maximum size for this form field.',
+            ]);
+        }
+
+        if ($acceptedExtensions !== [] && ! in_array(strtolower($fileExtension), $acceptedExtensions, true)) {
+            throw ValidationException::withMessages([
+                'file' => "The selected file type is not allowed for the form field \"{$field['label']}\".",
+            ]);
+        }
+
+        if (basename($originalFileName) !== $originalFileName) {
+            throw ValidationException::withMessages([
+                'file' => 'The selected file name is invalid.',
+            ]);
+        }
+
+        return $field;
+    }
+
+    private function formResponseRound(Proposal $proposal, Action $action): int
+    {
+        if ($action->action_type === 'review') {
+            return $this->currentReviewRound($proposal, $action);
+        }
+
+        return $proposal->actionTransitions()
+            ->where('action_id', $action->id)
+            ->count() + 1;
+    }
+
+    private function ensureAssignedFormsCompleted(
+        Request $request,
+        Proposal $proposal,
+        Action $action,
+    ): void {
+        $assignedDocumentIds = $this->reviewerAssignedDocumentIds($request, $proposal, $action);
+        $identity = [
+            'user_id' => (int) $request->user()->getKey(),
+            'user_type' => $request->user()::class,
+        ];
+        $missingForm = $action->documents()
+            ->where('documents.label', 'form')
+            ->whereIn('documents.id', $assignedDocumentIds)
+            ->get()
+            ->first(fn (Document $document): bool => ! ProposalFormResponse::query()
+                ->where('proposal_id', $proposal->id)
+                ->where('document_id', $document->id)
+                ->where('action_id', $action->id)
+                ->where('round', $this->formResponseRound($proposal, $action))
+                ->where('user_id', $identity['user_id'])
+                ->where('user_type', $identity['user_type'])
+                ->exists());
+
+        if ($missingForm) {
+            throw ValidationException::withMessages([
+                'decision' => "Complete the assigned form \"{$missingForm->name}\" before submitting your review.",
+            ]);
+        }
+    }
+
     public function directUploadUrl(Request $request, Proposal $proposal): JsonResponse
     {
         $validated = $request->validate([
@@ -601,6 +987,7 @@ class ProposalController extends Controller
             'required_document_id' => ['required', 'integer'],
             'action_id' => ['nullable', 'integer'],
             'replace_document_id' => ['nullable', 'integer'],
+            'form_field_id' => ['nullable', 'string', 'max:255'],
         ]);
 
         $this->authorizeProposalDocumentUpload(
@@ -617,6 +1004,16 @@ class ProposalController extends Controller
             isset($validated['action_id']) ? (int) $validated['action_id'] : null,
             $validated['content_type'],
         );
+        if (isset($validated['form_field_id'])) {
+            $requiredDocument = Document::query()->findOrFail($validated['required_document_id']);
+            $this->validateFormFileField(
+                $requiredDocument,
+                $validated['form_field_id'],
+                $validated['file_name'],
+                pathinfo($validated['file_name'], PATHINFO_EXTENSION),
+                (int) $validated['file_size'],
+            );
+        }
 
         $documentToReplace = isset($validated['replace_document_id'])
             ? $this->findProposalDocumentForReplacement(
@@ -682,12 +1079,14 @@ class ProposalController extends Controller
         $validated = $request->validate([
             'content_type' => ['required', 'string', 'max:255'],
             'file_size' => ['required', 'integer', 'min:1', 'max:10485760'],
+            'file_name' => ['required', 'string', 'max:255'],
             'path' => ['required', 'string', 'max:1024'],
             'reference' => ['required', 'uuid'],
             'phase_id' => ['required', 'integer'],
             'required_document_id' => ['required', 'integer'],
             'action_id' => ['nullable', 'integer'],
             'replace_document_id' => ['nullable', 'integer'],
+            'form_field_id' => ['nullable', 'string', 'max:255'],
         ]);
 
         $this->authorizeProposalDocumentUpload(
@@ -704,6 +1103,16 @@ class ProposalController extends Controller
             isset($validated['action_id']) ? (int) $validated['action_id'] : null,
             $validated['content_type'],
         );
+        if (isset($validated['form_field_id'])) {
+            $requiredDocument = Document::query()->findOrFail($validated['required_document_id']);
+            $this->validateFormFileField(
+                $requiredDocument,
+                $validated['form_field_id'],
+                $validated['file_name'],
+                pathinfo($validated['file_name'], PATHINFO_EXTENSION),
+                (int) $validated['file_size'],
+            );
+        }
 
         $documentToReplace = isset($validated['replace_document_id'])
             ? $this->findProposalDocumentForReplacement(
@@ -761,20 +1170,34 @@ class ProposalController extends Controller
                 );
             } else {
                 $document = Document::create([
-                    'name' => $requiredDocument->name,
+                    'name' => isset($validated['form_field_id'])
+                        ? Str::limit(basename($validated['file_name']), 255, '')
+                        : $requiredDocument->name,
                     'file_path' => $validated['path'],
                     'file_type' => $validated['content_type'],
-                    'label' => $requiredDocument->label,
+                    'label' => isset($validated['form_field_id']) ? 'doc' : $requiredDocument->label,
                     'storage_driver' => $storageDriver,
                 ]);
-                $proposal->documents()->attach($document->id, [
+                $pivotData = [
                     'phase_id' => $validated['phase_id'],
                     'required_document_id' => $requiredDocument->id,
                     'action_id' => $validated['action_id'] ?? null,
-                ]);
+                ];
+                if (isset($validated['form_field_id'])) {
+                    $pivotData = [
+                        ...$pivotData,
+                        'form_field_id' => $validated['form_field_id'],
+                        'form_uploader_id' => $request->user()->getKey(),
+                        'form_uploader_type' => $request->user()::class,
+                    ];
+                }
+                $proposal->documents()->attach($document->id, $pivotData);
             }
 
-            return response()->json(['message' => 'Proposal file uploaded.']);
+            return response()->json([
+                'message' => 'Proposal file uploaded.',
+                'document' => isset($document) ? ['id' => $document->id, 'name' => $document->name] : null,
+            ]);
         } catch (Throwable $exception) {
             report($exception);
 
@@ -1251,6 +1674,8 @@ class ProposalController extends Controller
                 ]);
             }
 
+            $this->ensureAssignedFormsCompleted($request, $lockedProposal, $action);
+
             $reviewer->update([
                 'decision' => $validated['decision'],
                 'comment' => $validated['comment'] ?? null,
@@ -1282,6 +1707,7 @@ class ProposalController extends Controller
                 : $this->userCanReviewAction($request, $action, $proposal),
             403,
         );
+        $this->ensureAssignedFormsCompleted($request, $proposal, $action);
 
         $requiredReviewerGroupIds = $this->subReviewerGroupIds($action, $proposal);
 
@@ -1392,6 +1818,7 @@ class ProposalController extends Controller
                 $uploadedRequiredDocumentIds = $lockedProposal->documents()
                     ->wherePivot('phase_id', $action->phase_id)
                     ->wherePivot('action_id', $action->id)
+                    ->wherePivotNull('form_field_id')
                     ->whereNotNull('required_document_id')
                     ->pluck('required_document_id')
                     ->map(fn ($id): int => (int) $id)
@@ -1401,12 +1828,34 @@ class ProposalController extends Controller
                     $action,
                 );
                 $missingDocument = $action->documents->first(
-                    fn (Document $document): bool => in_array((int) $document->id, $requiredDocumentIds, true)
+                    fn (Document $document): bool => $document->label !== 'form'
+                        && in_array((int) $document->id, $requiredDocumentIds, true)
                         && ! in_array((int) $document->id, $uploadedRequiredDocumentIds, true),
                 );
 
                 if ($missingDocument) {
                     return ['error' => "Upload the required document \"{$missingDocument->name}\" before submitting."];
+                }
+
+                $identity = [
+                    'user_id' => (int) $request->user()->getKey(),
+                    'user_type' => $request->user()::class,
+                ];
+                $missingForm = $action->documents->first(
+                    fn (Document $document): bool => $document->label === 'form'
+                        && in_array((int) $document->id, $requiredDocumentIds, true)
+                        && ! ProposalFormResponse::query()
+                            ->where('proposal_id', $lockedProposal->id)
+                            ->where('document_id', $document->id)
+                            ->where('action_id', $action->id)
+                            ->where('round', $this->formResponseRound($lockedProposal, $action))
+                            ->where('user_id', $identity['user_id'])
+                            ->where('user_type', $identity['user_type'])
+                            ->exists(),
+                );
+
+                if ($missingForm) {
+                    return ['error' => "Complete the required form \"{$missingForm->name}\" before submitting."];
                 }
             }
 

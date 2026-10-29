@@ -42,4 +42,9 @@ export type FormField = {
     scaleMaxLabel?: string;
 };
 
-export type FormFieldValue = string | string[] | number | File | null;
+export type SavedFormFile = {
+    document_id: number;
+    name: string;
+};
+
+export type FormFieldValue = string | string[] | number | File | SavedFormFile | null;

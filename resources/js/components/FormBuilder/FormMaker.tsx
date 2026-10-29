@@ -136,7 +136,7 @@ export default function FormMaker({ fields, onChange, disabled = false }: Props)
         <div className="space-y-4">
             <div className="flex items-center justify-between">
                 <div>
-                    <h3 className="text-sm font-semibold">Form Fields</h3>
+                    <h3 className="text-sm font-medium text-muted-foreground">Form Fields</h3>
                     <p className="text-xs text-muted-foreground">
                         Add, edit, and reorder form fields
                     </p>

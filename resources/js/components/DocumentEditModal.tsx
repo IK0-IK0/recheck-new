@@ -103,8 +103,8 @@ export default function DocumentEditModal({ document, trigger }: Props) {
                         {document.label === 'form' ? (
                             <div className="space-y-4 border-t border-border pt-6">
                                 <div>
-                                    <h3 className="text-sm font-semibold">Form Builder</h3>
-                                    <p className="text-xs text-muted-foreground">
+                                    <h3 className="text-base font-semibold tracking-tight">Form Builder</h3>
+                                    <p className="mt-0.5 text-sm text-muted-foreground">
                                         Design your form by adding and configuring fields
                                     </p>
                                 </div>

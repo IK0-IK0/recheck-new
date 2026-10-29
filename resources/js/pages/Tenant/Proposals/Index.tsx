@@ -23,6 +23,8 @@ import {
 import { useRef, useState } from 'react';
 import { toast } from 'sonner';
 import DocumentUploadModal from '@/components/DocumentUploadModal';
+import ProposalFormDialog from '@/components/FormBuilder/ProposalFormDialog';
+import type { FormField, FormFieldValue } from '@/components/FormBuilder/FormFieldTypes';
 import PhasePipeline from '@/components/PhasePipeline';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -61,6 +63,8 @@ type RequiredDocument = {
     name: string;
     file_type: string;
     label: 'form' | 'doc';
+    form_fields?: FormField[] | null;
+    form_response?: Record<string, FormFieldValue> | null;
 };
 
 type PhaseAction = {
@@ -121,6 +125,7 @@ type Proposal = {
             phase_id: number | null;
             required_document_id: number | null;
             action_id: number | null;
+            form_field_id?: string | null;
         };
     }[];
 };
@@ -431,7 +436,8 @@ export default function Index({
             (document) =>
                 Number(document.pivot.phase_id) === selectedPhase?.id &&
                 (!activeAction ||
-                    Number(document.pivot.action_id) === activeAction.id),
+                    Number(document.pivot.action_id) === activeAction.id) &&
+                document.pivot.form_field_id == null,
         ) ?? [];
     const uploadedRequiredDocumentIds = new Set(
         uploadedDocuments.flatMap((document) =>
@@ -994,6 +1000,58 @@ export default function Index({
                                                     <ul className="custom-scrollbar space-y-2 lg:max-h-56 lg:overflow-y-auto lg:pr-1">
                                                         {phaseDocuments.map(
                                                             (document) => {
+                                                                if (
+                                                                    document.label ===
+                                                                    'form'
+                                                                ) {
+                                                                    const isComplete =
+                                                                        Boolean(
+                                                                            document.form_response,
+                                                                        );
+
+                                                                    return (
+                                                                        <li
+                                                                            key={document.id}
+                                                                            className={`flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 ${
+                                                                                isComplete
+                                                                                    ? 'border-primary bg-primary/5'
+                                                                                    : 'border-border'
+                                                                            }`}
+                                                                        >
+                                                                            <div className="flex min-w-0 items-center gap-3">
+                                                                                {isComplete ? (
+                                                                                    <CheckCircle2 className="size-4 shrink-0 text-primary" />
+                                                                                ) : (
+                                                                                    <FileText className="size-4 shrink-0 text-muted-foreground" />
+                                                                                )}
+                                                                                <div className="min-w-0">
+                                                                                    <p className="truncate text-sm font-medium">
+                                                                                        {document.name}
+                                                                                    </p>
+                                                                                    <p className="truncate text-xs text-muted-foreground">
+                                                                                        {isComplete
+                                                                                            ? 'Form response saved'
+                                                                                            : 'Form · not completed'}
+                                                                                    </p>
+                                                                                </div>
+                                                                            </div>
+                                                                            {activeAction && selectedPhase ? (
+                                                                                <ProposalFormDialog
+                                                                                    proposalId={activeProposal.id}
+                                                                                    phaseId={selectedPhase.id}
+                                                                                    actionId={activeAction.id}
+                                                                                    document={document}
+                                                                                    currentStorageDriver={currentStorageDriver}
+                                                                                    canFill={
+                                                                                        isCurrentActionSelected
+                                                                                        && activeAction.action_type === 'submit'
+                                                                                    }
+                                                                                />
+                                                                            ) : null}
+                                                                        </li>
+                                                                    );
+                                                                }
+
                                                                 const submittedDocument =
                                                                     uploadedDocuments.find(
                                                                         (
@@ -1302,14 +1360,13 @@ export default function Index({
                                             <CheckCircle2 className="size-4" />
                                             {
                                                 phaseDocuments.filter(
-                                                    (document) =>
-                                                        uploadedRequiredDocumentIds.has(
-                                                            document.id,
-                                                        ),
+                                                    (document) => document.label === 'form'
+                                                        ? Boolean(document.form_response)
+                                                        : uploadedRequiredDocumentIds.has(document.id),
                                                 ).length
                                             }
                                             {' / '}
-                                            {phaseDocuments.length} files
+                                            {phaseDocuments.length} items
                                             complete
                                         </p>
                                         {activeAction?.action_type ===
@@ -1320,10 +1377,9 @@ export default function Index({
                                                 disabled={
                                                     isAdvancing ||
                                                     phaseDocuments.some(
-                                                        (document) =>
-                                                            !uploadedRequiredDocumentIds.has(
-                                                                document.id,
-                                                            ),
+                                                        (document) => document.label === 'form'
+                                                            ? !document.form_response
+                                                            : !uploadedRequiredDocumentIds.has(document.id),
                                                     )
                                                 }
                                                 onClick={handleSubmitAction}

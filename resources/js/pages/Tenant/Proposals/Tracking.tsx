@@ -15,6 +15,8 @@ import {
 import { useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import PhasePipeline from '@/components/PhasePipeline';
+import ProposalFormDialog from '@/components/FormBuilder/ProposalFormDialog';
+import type { FormField, FormFieldValue } from '@/components/FormBuilder/FormFieldTypes';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -53,7 +55,7 @@ type Action = {
     action_type: 'submit' | 'review';
     decision_mode: 'approve_deny' | 'custom';
     custom_decision_branches?: { id: string; label: string; destination?: string }[] | null;
-    documents?: { id: number; name: string; file_type: string; label: 'form' | 'doc' }[];
+    documents?: { id: number; name: string; file_type: string; label: 'form' | 'doc'; form_fields?: FormField[] | null }[];
 };
 
 type ReviewCandidate = {
@@ -89,6 +91,8 @@ type ReviewDocument = {
     name: string;
     file_type: string;
     label: 'form' | 'doc';
+    form_fields?: FormField[] | null;
+    form_response?: Record<string, FormFieldValue> | null;
 };
 
 type Process = {
@@ -133,6 +137,7 @@ type Proposal = {
             phase_id: number | null;
             required_document_id: number | null;
             action_id: number | null;
+            form_field_id?: string | null;
         };
     }[];
 };
@@ -208,7 +213,6 @@ export default function Tracking({ proposals, currentStorageDriver }: Props) {
     const [reviewerSelections, setReviewerSelections] = useState<Record<number, Record<string, string>>>({});
     const [openReviewerGroupId, setOpenReviewerGroupId] = useState<string | null>(null);
     const [reviewerSearchQuery, setReviewerSearchQuery] = useState('');
-    const [filledReviewFormIds, setFilledReviewFormIds] = useState<number[]>([]);
     const [rejectedDocumentIds, setRejectedDocumentIds] = useState<number[]>([]);
     const [rejectedDocumentComments, setRejectedDocumentComments] = useState<
         Record<number, string>
@@ -414,7 +418,7 @@ Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.`;
         : [];
     const assignedReviewDocumentsComplete = assignedReviewDocuments.every(
         (reviewDocument) => reviewDocument.label === 'form'
-            ? filledReviewFormIds.includes(reviewDocument.id)
+            ? Boolean(reviewDocument.form_response)
             : (selectedProposal?.documents ?? []).some(
                   (file) =>
                       file.pivot.action_id === selectedProposal?.current_action?.id
@@ -423,7 +427,7 @@ Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.`;
     );
     const completedReviewDocumentCount = assignedReviewDocuments.filter(
         (reviewDocument) => reviewDocument.label === 'form'
-            ? filledReviewFormIds.includes(reviewDocument.id)
+            ? Boolean(reviewDocument.form_response)
             : (selectedProposal?.documents ?? []).some(
                   (file) =>
                       file.pivot.action_id === selectedProposal?.current_action?.id
@@ -493,7 +497,6 @@ Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.`;
                 onFinish: () => setIsSubmittingDecision(false),
                 onSuccess: () => {
                     setSelectedProposalId(null);
-                    setFilledReviewFormIds([]);
                     toast.success('Review decision submitted.');
                     router.reload({ only: ['proposals'] });
                 },
@@ -980,7 +983,6 @@ Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.`;
                         setSelectedReviewDecision('');
                         setSelectedMemberRecommendation('');
                         setMemberRecommendationComment('');
-                        setFilledReviewFormIds([]);
                         setRejectedDocumentIds([]);
                         setRejectedDocumentComments({});
                         setCommentingDocumentIds([]);
@@ -1348,7 +1350,7 @@ Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.`;
                                                                     </p>
                                                                     <p className="truncate text-xs text-muted-foreground">
                                                                         {reviewDocument.label === 'form'
-                                                                            ? filledReviewFormIds.includes(reviewDocument.id)
+                                                                            ? reviewDocument.form_response
                                                                                 ? 'Form filled'
                                                                                 : 'Form'
                                                                             : uploadedDocument
@@ -1409,25 +1411,19 @@ Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.`;
                                                                             )}
                                                                         </Button>
                                                                     </div>
-                                                                ) : (
-                                                                    <Button
-                                                                        type="button"
-                                                                        variant={filledReviewFormIds.includes(reviewDocument.id) ? 'secondary' : 'outline'}
-                                                                        size="sm"
-                                                                        disabled={isSubmittingDecision}
-                                                                        onClick={() => {
-                                                                            setFilledReviewFormIds((current) =>
-                                                                                current.includes(reviewDocument.id)
-                                                                                    ? current
-                                                                                    : [...current, reviewDocument.id],
-                                                                            );
-                                                                        }}
-                                                                    >
-                                                                        {filledReviewFormIds.includes(reviewDocument.id)
-                                                                            ? 'Filled'
-                                                                            : 'Fill'}
-                                                                    </Button>
-                                                                )}
+                                                                ) : selectedProposal.current_phase && selectedProposal.current_action ? (
+                                                                    <ProposalFormDialog
+                                                                        proposalId={selectedProposal.id}
+                                                                        phaseId={selectedProposal.current_phase.id}
+                                                                        actionId={selectedProposal.current_action.id}
+                                                                        document={reviewDocument}
+                                                                        currentStorageDriver={currentStorageDriver}
+                                                                        canFill={
+                                                                            selectedProposal.can_review
+                                                                            && !isSubmittingDecision
+                                                                        }
+                                                                    />
+                                                                ) : null}
                                                             </div>
                                                         </li>
                                                     );

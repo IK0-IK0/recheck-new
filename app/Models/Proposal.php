@@ -100,7 +100,22 @@ class Proposal extends Model
     public function documents(): BelongsToMany
     {
         return $this->belongsToMany(Document::class, 'proposal_documents', 'proposal_id', 'document_id')
-            ->withPivot(['phase_id', 'required_document_id', 'action_id']);
+            ->withPivot([
+                'phase_id',
+                'required_document_id',
+                'action_id',
+                'form_field_id',
+            ]);
+    }
+
+    /**
+     * The saved form responses for the proposal.
+     *
+     * @return HasMany<ProposalFormResponse, $this>
+     */
+    public function formResponses(): HasMany
+    {
+        return $this->hasMany(ProposalFormResponse::class);
     }
 
     /**
