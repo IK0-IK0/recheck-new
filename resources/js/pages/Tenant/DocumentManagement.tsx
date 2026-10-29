@@ -62,46 +62,41 @@ const fileExtension = (fileType: string, fileName?: string): string => {
     return fileType.split('/').pop()?.toLowerCase() || 'file';
 };
 
-const fileTypeLabel = (fileType: string, fileName: string, label: string): string => {
-    if (label === 'form' && !fileName) {
-        return 'FORM';
+const getDisplayName = (document: DocumentRecord): string => {
+    // For forms without files, just return the name
+    if (document.label === 'form' && !document.file_path) {
+        return document.name;
     }
-    return fileExtension(fileType, fileName).toUpperCase();
+
+    // If the name already has an extension, return as is
+    if (document.name.includes('.')) {
+        return document.name;
+    }
+
+    // Try to get extension from file_path or file_type
+    if (document.file_path) {
+        const extension = fileExtension(document.file_type || '', document.file_path);
+        if (extension && extension !== 'file') {
+            return `${document.name}.${extension}`;
+        }
+    }
+
+    return document.name;
 };
 
 const FileKindIcon = ({
-    fileType,
-    fileName,
     label,
 }: {
-    fileType: string;
-    fileName: string;
     label: string;
 }) => {
-    if (label === 'form' && !fileName) {
+    if (label === 'form') {
         return (
             <FileText className="size-4 text-purple-600" aria-hidden="true" />
         );
     }
 
-    const extension = fileExtension(fileType, fileName);
-
-    if (['xls', 'xlsx', 'csv'].includes(extension)) {
-        return (
-            <FileSpreadsheet
-                className="size-4 text-emerald-600"
-                aria-hidden="true"
-            />
-        );
-    }
-
-    if (['doc', 'docx', 'txt'].includes(extension)) {
-        return (
-            <FileType2 className="size-4 text-blue-600" aria-hidden="true" />
-        );
-    }
-
-    return <FileText className="size-4 text-red-600" aria-hidden="true" />;
+    // Document icon
+    return <FileText className="size-4 text-blue-600" aria-hidden="true" />;
 };
 
 type UploadValues = {

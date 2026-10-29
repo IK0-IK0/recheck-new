@@ -387,8 +387,62 @@ class DocumentManagementController extends Controller
     {
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
+            'file' => ['nullable', 'file', 'max:10240'], // 10MB max
         ]);
 
+        $uploadedFile = $request->file('file');
+        $storageDriver = 'unknown';
+
+        // If a new file is provided, replace the old one
+        if ($uploadedFile) {
+            try {
+                $storageDriver = $this->getStorageDisk();
+
+                // Delete old file if it exists
+                if ($document->file_path && $document->storage_driver) {
+                    $oldDisk = Storage::disk($document->storage_driver);
+                    if ($oldDisk->exists($document->file_path)) {
+                        $oldDisk->delete($document->file_path);
+                    }
+                }
+
+                // Upload new file
+                $filePath = $uploadedFile->store('documents', $storageDriver);
+
+                if (! is_string($filePath)) {
+                    throw new \RuntimeException('The storage disk did not return a file path after upload.');
+                }
+
+                $document->update([
+                    'name' => $validated['name'],
+                    'file_path' => $filePath,
+                    'file_type' => $uploadedFile->getMimeType(),
+                    'storage_driver' => $storageDriver,
+                ]);
+
+                return redirect()->back();
+            } catch (Throwable $exception) {
+                report($exception);
+
+                $reference = (string) Str::uuid();
+                Log::error('document_update_upload_failed', [
+                    'reference' => $reference,
+                    'document_id' => $document->id,
+                    'storage_driver' => $storageDriver,
+                    'file_name' => $uploadedFile->getClientOriginalName(),
+                    'file_size' => $uploadedFile->getSize(),
+                    'exception' => $exception::class,
+                    'exception_message' => $exception->getMessage(),
+                    'previous_exception' => $exception->getPrevious()?->getMessage(),
+                ]);
+
+                return redirect()->back()->withErrors([
+                    'storage' => $this->storageErrorMessage($storageDriver, $exception, $reference),
+                ]);
+            }
+        }
+
+        // Just update the name
         $document->update([
             'name' => $validated['name'],
         ]);

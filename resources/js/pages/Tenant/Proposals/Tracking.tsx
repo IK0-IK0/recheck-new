@@ -821,22 +821,22 @@ Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.`;
                 <div className="flex items-center gap-2">
                     {Object.keys(sampleFilesByPhase).length > 0 ? (
                         <Button
-                            variant="outline"
+                            variant="ghost"
                             size="sm"
                             onClick={handleClearSampleFiles}
-                            className="h-8 text-xs"
+                            className="h-8 text-xs text-muted-foreground hover:text-foreground"
                         >
-                            Clear Sample Files
+                            Clear Samples
                         </Button>
                     ) : null}
                     <Button
                         variant="outline"
                         size="sm"
                         onClick={handleGenerateSampleFiles}
-                        className="h-8 text-xs"
+                        className="h-8 gap-1.5 text-xs"
                     >
-                        <Beaker className="mr-1.5 size-3.5" />
-                        Generate Sample Files
+                        <Beaker className="size-3.5" />
+                        Generate Samples
                     </Button>
                 </div>
             </header>

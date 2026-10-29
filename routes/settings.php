@@ -36,6 +36,7 @@ Route::middleware(['auth'])->group(function () {
 
     Route::inertia('settings/notifications', 'settings/notifications')->name('notifications.edit');
     Route::inertia('settings/subscription', 'settings/subscription')->name('subscription.edit');
+    Route::inertia('settings/appearance', 'settings/appearance')->name('appearance.edit');
 
     Route::get('settings/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('settings/profile', [ProfileController::class, 'update'])->name('profile.update');

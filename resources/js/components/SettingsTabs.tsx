@@ -14,6 +14,7 @@ export default function SettingsTabs() {
             { name: 'Storage', href: '/settings/storage', current: url.startsWith('/settings/storage') },
         ] : []),
         ...(isAdmin ? [{ name: 'Documents', href: '/settings/api', current: url.startsWith('/settings/api') }] : []),
+        { name: 'Appearance', href: '/settings/appearance', current: url.startsWith('/settings/appearance') },
         { name: 'Security', href: '/settings/security', current: url.startsWith('/settings/security') },
         ...(!isAdmin ? [
             { name: 'Subscription', href: '/settings/subscription', current: url.startsWith('/settings/subscription') },
