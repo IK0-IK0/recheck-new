@@ -4,6 +4,7 @@ import {
     Check,
     ChevronDown,
     ChevronUp,
+    Edit3,
     Plus,
     Search,
     Trash2,
@@ -28,6 +29,7 @@ import {
     DialogTitle,
     DialogTrigger,
 } from '@/components/ui/dialog';
+import DocumentEditModal from '@/components/DocumentEditModal';
 
 const defaultActionInitialValues = {
     name: '',
@@ -416,6 +418,7 @@ export default function ActionModal({
     const [activeDocumentSet, setActiveDocumentSet] = useState('all');
     const [activeReviewerGroupSetKey, setActiveReviewerGroupSetKey] =
         useState('all');
+    const [editingDocument, setEditingDocument] = useState(null);
 
     const dialogOpen = open === undefined ? internalOpen : open;
     const setDialogOpen = onOpenChange ?? setInternalOpen;
@@ -1752,6 +1755,44 @@ export default function ActionModal({
                                                         />
                                                     </div>
                                                 </div>
+                                                {/* Selected documents with form edit */}
+                                                {(() => {
+                                                    const selectedDocumentIds = values.action_type === 'submit' && activeDocumentSetForDisplay !== 'all'
+                                                        ? (group.decisionDocumentSets.find(
+                                                              (set) => `${set.actionId}:${set.decisionId}` === activeDocumentSetForDisplay,
+                                                          )?.documentIds ?? [])
+                                                        : group.documentIds;
+                                                    const selectedDocs = documents.filter(doc => selectedDocumentIds.includes(doc.id));
+                                                    
+                                                    if (selectedDocs.length === 0) return null;
+                                                    
+                                                    return (
+                                                        <div className="mt-3 grid gap-2">
+                                                            <p className="text-xs font-semibold text-muted-foreground">Selected documents:</p>
+                                                            <div className="grid gap-2">
+                                                                {selectedDocs.map((doc) => (
+                                                                    <div key={doc.id} className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2">
+                                                                        <span className="text-sm">{doc.name}</span>
+                                                                        {doc.label === 'form' ? (
+                                                                            <Button
+                                                                                type="button"
+                                                                                variant="ghost"
+                                                                                size="sm"
+                                                                                className="h-7 gap-1.5 text-xs"
+                                                                                onClick={() => setEditingDocument(doc)}
+                                                                            >
+                                                                                <Edit3 className="size-3.5" />
+                                                                                Configure form
+                                                                            </Button>
+                                                                        ) : (
+                                                                            <span className="text-xs text-muted-foreground">Document</span>
+                                                                        )}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })()}
                                             </div>
                                         ),
                                     )}
@@ -1777,6 +1818,17 @@ export default function ActionModal({
                     </DialogFooter>
                 </form>
             </DialogContent>
+            
+            {/* Form editor modal */}
+            {editingDocument ? (
+                <DocumentEditModal
+                    document={editingDocument}
+                    open={Boolean(editingDocument)}
+                    onOpenChange={(open) => {
+                        if (!open) setEditingDocument(null);
+                    }}
+                />
+            ) : null}
         </Dialog>
     );
 }

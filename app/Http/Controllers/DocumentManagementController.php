@@ -73,7 +73,7 @@ class DocumentManagementController extends Controller
                 'file_path' => null,
                 'file_type' => null,
                 'label' => 'form',
-                'storage_driver' => null,
+                'storage_driver' => 'none', // Forms don't need storage
             ]);
 
             return redirect()->back();
