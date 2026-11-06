@@ -707,6 +707,7 @@ Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.`;
                     },
                     body: JSON.stringify({
                         ...metadata,
+                        file_name: file.name,
                         path: uploadData.path,
                         reference: uploadData.reference,
                         file_size: file.size,

@@ -575,6 +575,7 @@ export default function Index({
                         },
                         body: JSON.stringify({
                             ...uploadMetadata,
+                            file_name: file.name,
                             content_type:
                                 file.type || 'application/octet-stream',
                             file_size: file.size,
