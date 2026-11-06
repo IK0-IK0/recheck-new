@@ -24,10 +24,17 @@ test('proposal workflow persistence tables exist after tenant migrations', funct
     }
 });
 
-test('proposal documents record their phase and required document', function () {
+test('proposal documents record workflow and form metadata', function () {
     $columns = Schema::connection('tenant')->getColumnListing('proposal_documents');
 
-    expect($columns)->toContain('phase_id', 'required_document_id');
+    expect($columns)->toContain(
+        'phase_id',
+        'required_document_id',
+        'action_id',
+        'form_field_id',
+        'form_uploader_id',
+        'form_uploader_type',
+    );
 });
 
 test('users table has theme_color column with default zinc', function () {
