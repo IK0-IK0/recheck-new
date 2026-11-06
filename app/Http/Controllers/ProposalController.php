@@ -294,6 +294,7 @@ class ProposalController extends Controller
             'currentStorageDriver' => StorageConfig::activeForCurrentUser()?->driver ?? 'local',
             'viewerId' => $request->user()->getKey(),
             'viewerType' => $request->user()::class,
+            'canManageProposals' => $this->canManageProposals($request),
             'selectedProposalId' => is_int($requestedProposalId) && $proposals->contains('id', $requestedProposalId)
                 ? $requestedProposalId
                 : null,
@@ -755,7 +756,7 @@ class ProposalController extends Controller
             && $request->user()::class === $proposal->user_type;
 
         if ($action->action_type === 'submit') {
-            abort_unless($isOwner, 403);
+            abort_unless($isOwner || $this->canManageProposals($request), 403);
         } else {
             abort_unless(
                 $action->action_type === 'review'
@@ -2137,6 +2138,12 @@ class ProposalController extends Controller
             && $user->role === 'institution';
     }
 
+    private function canManageProposals(Request $request): bool
+    {
+        return $this->isInstitutionAccount($request)
+            || $this->userHasPermission($request, 'proposal.view.all');
+    }
+
     private function currentReviewRound(Proposal $proposal, Action $action): int
     {
         return ProposalActionTransition::query()
@@ -2299,16 +2306,25 @@ class ProposalController extends Controller
             return;
         }
 
+        $this->authorizeProposalInstitution($request, $proposal);
+
         abort_unless(
-            $request->user()->getInstitutionId() !== null
-                && (int) $request->user()->getInstitutionId() === (int) $proposal->institution_id
-                && $actionId !== null
+            $actionId !== null
                 && $requiredDocumentId !== null
                 && (int) $proposal->current_action_id === $actionId,
             403,
         );
 
         $action = Action::query()->findOrFail($actionId);
+
+        if ($this->canManageProposals($request) && $action->action_type === 'submit') {
+            abort_unless(
+                $action->documents()->whereKey($requiredDocumentId)->exists(),
+                403,
+            );
+
+            return;
+        }
 
         abort_unless(
             $action->action_type === 'review'

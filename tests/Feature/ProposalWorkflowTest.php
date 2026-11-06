@@ -1195,6 +1195,51 @@ test('proposal upload derives document type and rejects files that do not match 
         ->and(Storage::disk('local')->allFiles('proposals/'.$proposal->id.'/documents'))->toBe([]);
 });
 
+test('institution account can upload a required file for a current submission action', function () {
+    Storage::fake('local');
+
+    $process = Process::factory()->create();
+    $phase = Phase::factory()->for($process)->create();
+    $action = Action::factory()->for($phase)->create(['action_type' => 'submit']);
+    $requiredDocument = Document::factory()->create([
+        'label' => 'doc',
+        'file_type' => 'application/pdf',
+    ]);
+    $action->documents()->attach($requiredDocument);
+    $proposal = Proposal::create([
+        'title' => 'Research proposal',
+        'user_id' => 2,
+        'user_type' => User::class,
+        'institution_id' => 1,
+        'process_id' => $process->id,
+        'current_phase_id' => $phase->id,
+        'current_action_id' => $action->id,
+    ]);
+    $institutionAccount = new User;
+    $institutionAccount->setAttribute('id', 1);
+    $institutionAccount->setAttribute('role', 'institution');
+    $request = Request::create(
+        '/tenant/proposals/'.$proposal->id.'/documents',
+        'POST',
+        [
+            'phase_id' => $phase->id,
+            'required_document_id' => $requiredDocument->id,
+            'action_id' => $action->id,
+        ],
+        [],
+        ['file' => UploadedFile::fake()->create('application.pdf', 20, 'application/pdf')],
+    );
+    $request->setUserResolver(fn (): User => $institutionAccount);
+
+    app(ProposalController::class)->storeDocument($request, $proposal);
+
+    $uploadedDocument = $proposal->documents()->firstOrFail();
+
+    expect($uploadedDocument->pivot->required_document_id)->toBe($requiredDocument->id)
+        ->and($uploadedDocument->pivot->action_id)->toBe($action->id)
+        ->and(Storage::disk('local')->exists($uploadedDocument->file_path))->toBeTrue();
+});
+
 test('proposal details can still upload a document without a phase requirement', function () {
     Storage::fake('local');
 

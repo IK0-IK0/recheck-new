@@ -93,6 +93,7 @@ type PhaseAction = {
 type Proposal = {
     id: number;
     user_id: number;
+    user_type: string;
     title: string;
     type?: string | null;
     process: Process | null;
@@ -134,6 +135,9 @@ type Props = {
     proposals: Proposal[];
     isTracking: boolean;
     currentStorageDriver: string;
+    viewerId: number;
+    viewerType: string;
+    canManageProposals: boolean;
     selectedProposalId: number | null;
 };
 
@@ -201,6 +205,9 @@ export default function Index({
     proposals,
     isTracking,
     currentStorageDriver,
+    viewerId,
+    viewerType,
+    canManageProposals,
     selectedProposalId,
 }: Props) {
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -328,8 +335,13 @@ export default function Index({
     const isCurrentActionSelected =
         isCurrentPhaseSelected &&
         activeAction?.id === activeProposal?.current_action?.id;
+    const isProposalOwner =
+        activeProposal?.user_id === viewerId &&
+        activeProposal.user_type === viewerType;
     const canUploadSelectedAction =
-        isCurrentActionSelected && activeAction?.action_type !== 'review';
+        isCurrentActionSelected &&
+        activeAction?.action_type === 'submit' &&
+        (isProposalOwner || canManageProposals);
     const pipelinePhases = proposalPhases.map((phase, index) => {
         const isCurrent = phase.id === activeProposal?.current_phase?.id;
         const isComplete = activePhaseIndex >= 0 && index < activePhaseIndex;
@@ -1045,6 +1057,7 @@ export default function Index({
                                                                                     canFill={
                                                                                         isCurrentActionSelected
                                                                                         && activeAction.action_type === 'submit'
+                                                                                        && (isProposalOwner || canManageProposals)
                                                                                     }
                                                                                 />
                                                                             ) : null}
